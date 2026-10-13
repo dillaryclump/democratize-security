@@ -1,0 +1,28 @@
+name: Research hypothesis
+description: A bounded, reproducible experiment
+title: '[Research] '
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis and baseline
+    validations:
+      required: true
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Tasks, family splits, metrics and stopping rule
+    validations:
+      required: true
+  - type: textarea
+    id: budget
+    attributes:
+      label: Budget, permissions and required gates
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and possible disconfirming results
+    validations:
+      required: true
