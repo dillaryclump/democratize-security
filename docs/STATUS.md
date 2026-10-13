@@ -28,3 +28,7 @@ License choice, main-branch protections (including postgres-reference), and priv
 ## Handoff discipline
 
 Update this file with actually observed commands/results, limitations and the next bounded task. Preserve negative outcomes. Do not call the entire security MVP complete because a synthetic reference passes.
+
+## M2 artifact prerequisite (current follow-up)
+
+Implemented explicit-allowlist sealing, bounded canonical bundles, integrity inspection, no-overwrite publication and artifact/verifier/result hash binding. See ARTIFACTS.md. This does not establish execution provenance or worker isolation; those remain the next integration task.

@@ -37,4 +37,4 @@ Every PR states: problem; change; requirement covered; tests actually run and th
 
 ## Immediate next work
 
-Read docs/REFERENCE.md for the implemented synthetic reference and public verifier. Review the concrete M0 defaults; complete remaining M1 identity/error-path checks before M2 worker isolation. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.
+Read docs/REFERENCE.md for the implemented synthetic reference and public verifier. Identity/error-path checks are implemented. Read docs/ARTIFACTS.md for the M2 artifact prerequisite and implement actual worker isolation next. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.
