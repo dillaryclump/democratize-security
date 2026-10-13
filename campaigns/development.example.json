@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "name": "development-integration-example",
+  "hypothesis": "The full integration preserves authorized invoice behavior and prevents cross-tenant exposure.",
+  "source_revision": "0812a56517d1826c90cecd4896f7619387e582a8",
+  "scoring_version": "draft-operational-joint-v1",
+  "model": {
+    "provider": "not-configured",
+    "identifier": "offline-placeholder",
+    "settings": {}
+  },
+  "conditions": [
+    "ordinary",
+    "instructions",
+    "rls_starter",
+    "full_tool"
+  ],
+  "repetitions": 1,
+  "tasks": [
+    {
+      "id": "invoice-read-dev",
+      "family": "invoice-read",
+      "split": "development",
+      "revision": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "id": "invoice-search-dev",
+      "family": "invoice-search",
+      "split": "development",
+      "revision": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "id": "invoice-export-dev",
+      "family": "invoice-export",
+      "split": "development",
+      "revision": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "limits": {
+    "max_trials": 12,
+    "max_cost_usd_cents": 0,
+    "timeout_seconds": 600,
+    "infrastructure_retries": 1,
+    "repair_attempts": 0,
+    "concurrency": 1
+  },
+  "stopping_rule": "Offline example only; no execution authorized."
+}

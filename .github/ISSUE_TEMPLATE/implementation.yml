@@ -1,0 +1,23 @@
+name: Implementation task
+description: A bounded engineering change with acceptance evidence
+title: '[Engineering] '
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Problem and milestone
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and excluded work
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Include useful behavior, failure cases and exact verification.
+    validations:
+      required: true
