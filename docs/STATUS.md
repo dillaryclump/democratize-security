@@ -21,7 +21,7 @@ No production identity provider, sealed-artifact provenance, protected holdout v
 
 ## Decisions and next work
 
-Review the concrete reference access contract in REFERENCE.md and ADR 0003. Production identity and final-study semantics remain pending founder acceptance. Implemented next slice: sanitized HTTP database errors, real permission-failure/recovery on the same backend, malformed/duplicate auth checks, input bounds and concurrent tenant requests. Local suite: 36 pass, 12 database tests skip; v2 PostgreSQL CI pending. Next: review M0 contract and prove M2 worker isolation and artifact sealing with three real tasks. A dedicated worker host and finite model budget are still required before agent execution.
+Review the concrete reference access contract in REFERENCE.md and ADR 0003. Production identity and final-study semantics remain pending founder acceptance. Implemented next slice: sanitized HTTP database errors, real permission-failure/recovery on the same backend, malformed/duplicate auth checks, input bounds and concurrent tenant requests. Local suite: 36 pass, 12 database tests skip. v2 PostgreSQL 17 CI run 38477380739: all 48 tests passed, no skips, in 8.82 seconds. Both core Python matrix jobs also passed. Next: review M0 contract and prove M2 worker isolation and artifact sealing with three real tasks. A dedicated worker host and finite model budget are still required before agent execution.
 
 License choice, main-branch protections (including postgres-reference), and private vulnerability reporting remain repository-owner setup decisions. No open-source license or paid infrastructure was provisioned.
 

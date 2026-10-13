@@ -71,8 +71,10 @@ GitHub Actions run [38466115426](https://github.com/dillaryclump/democratize-sec
 
 ## Next bounded work
 
-Confirm the v2 identity/recovery checks in real PostgreSQL CI, then externalize schema/fixture provisioning only if needed for a usable demonstration. Review M0 defaults with Dillon. M2 then proves sealed-artifact verification and protected worker separation with three actual tasks. Do not enable model calls, final grading or automated search based on these fixture tests alone.
+The v2 identity/recovery checks passed real PostgreSQL CI. Externalize schema/fixture provisioning only if needed for a usable demonstration. Review M0 defaults with Dillon. M2 then proves sealed-artifact verification and protected worker separation with three actual tasks. Do not enable model calls, final grading or automated search based on these fixture tests alone.
 
 ## Protocol revision history
 
 `synthetic-reference-v2` adds malformed/ambiguous authentication cases to the required identity check. v1 evidence remains tied to its original revision; the stronger v2 checks are not retroactively attributed to v1. HTTP failure injection and concurrency are harness integration tests, not new required groups in the standalone read-only verifier.
+
+V2 evidence: [CI run 38477380739](https://github.com/dillaryclump/democratize-security/actions/runs/38477380739) passed all 48 tests with no skips in 8.82 seconds, including real HTTP database-error recovery and concurrent tenant requests. Both Python matrix jobs passed.
