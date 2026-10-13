@@ -1,6 +1,6 @@
 # System architecture
 
-Status: target architecture. Only offline contracts and planning are implemented.
+Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. Worker isolation, protected final assessment and automated research execution remain unimplemented. See REFERENCE.md.
 
 ## Three separate authority domains
 
@@ -31,7 +31,7 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | Benchmark adapters | future `adapters/benchmarks/` | Prepare/inject/extract/normalize; preserve original scoring and task provenance |
 | Proposer adapters | future `adapters/proposers/` | Manual candidate initially, GEPA later; development feedback only |
 | Security integration | `candidates/` | Prompts/templates/helpers/policies that the product ships; cannot define authoritative grades |
-| Verifier | future `verification/` plus external protected material | Fresh-environment functional/security checks with trusted provenance |
+| Verifier | `src/democratize_security/verification/` | Public fixed-fixture HTTP/database checks implemented; protected verification and sealed-artifact provenance remain future work |
 | Reporting | future `reports/` | Aggregate all scheduled outcomes, costs, uncertainty and limitations |
 
 Do not create empty plugin classes for every hypothetical future integration. Add a module when its first concrete behavior and tests are implemented.

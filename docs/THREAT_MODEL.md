@@ -1,6 +1,6 @@
 # Threat model and draft access contract
 
-**M0 review required.** This document translates the approved direction into explicit proposed behavior. Dillon must resolve identity and response semantics before the verifier freezes expectations.
+**Reference contract v1 implemented for review.** `REFERENCE.md` makes fixture identity and response semantics concrete. This is an engineering default for the synthetic reference, not a claimed founder approval of production identity or final experiment expectations.
 
 ## Property and assumptions
 
@@ -13,7 +13,7 @@ Trusted: verified authentication, server-side membership lookup, initial schema/
 | Request | Proposed required behavior |
 | --- | --- |
 | Authenticated A reads A invoice | Return expected A invoice fields |
-| Authenticated A reads B invoice ID | No B fields; choose and freeze consistent 403/404 semantics |
+| Authenticated A reads B invoice ID | 404 with the same fixed response as a missing invoice; no B fields |
 | A lists/searches with pagination | Only matching A rows; expected A rows remain discoverable |
 | A exports CSV | Only authorized A rows and allowed fields; parse and inspect contents |
 | A supplies B tenant header/query field | Cannot switch effective tenant or expand access |

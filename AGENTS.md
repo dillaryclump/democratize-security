@@ -37,4 +37,4 @@ Every PR states: problem; change; requirement covered; tests actually run and th
 
 ## Immediate next work
 
-Complete M0 ownership/identity contract review, then M1: a reference invoice application, deliberately vulnerable variants, and an independent verifier against real PostgreSQL. Do not jump directly to GEPA or a hosted dashboard.
+Read docs/REFERENCE.md for the implemented synthetic reference and public verifier. Review the concrete M0 defaults; complete remaining M1 identity/error-path checks before M2 worker isolation. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.
