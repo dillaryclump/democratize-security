@@ -63,6 +63,10 @@ The fixture intentionally does not provision or expose a permanent database/serv
 
 A separate real-pool integration test proves transaction context clears after success and division-by-zero rollback on the same PostgreSQL backend connection before tenant B is used. It does not yet exercise an HTTP-level application database-error recovery path. This remaining gap must stay visible.
 
+## Observed validation
+
+GitHub Actions run [38466115426](https://github.com/dillaryclump/democratize-security/actions/runs/38466115426), code revision `cff24c83a91d919084c29cffe915bae95fa65b9e`: PostgreSQL 17 integration job ran all 45 tests with no skips, 45 passed in 4.60 seconds. This establishes behavior for these synthetic fixtures and faults, not general security efficacy. Locally, 36 tests passed and 9 database tests skipped because PostgreSQL was unavailable.
+
 ## Next bounded work
 
 Add HTTP error/recovery and broader identity edge cases, then externalize schema/fixture provisioning only if needed for a usable demonstration. Review M0 defaults with Dillon. M2 then proves sealed-artifact verification and protected worker separation with three actual tasks. Do not enable model calls, final grading or automated search based on these fixture tests alone.

@@ -13,7 +13,7 @@ Updated: 2026-10-13. Stage: M0 concrete reference defaults; M1 first implementat
 
 ## Verification
 
-Local Python 3.12: 36 tests pass, 9 PostgreSQL integration tests explicitly skip because no local database server is available. Ruff checks pass and package builds succeed. The dedicated GitHub PostgreSQL 17 gate must pass before the reference is accepted. A skip is not security evidence.
+Local Python 3.12: 36 tests pass, 9 PostgreSQL integration tests explicitly skip because no local database server is available. Ruff checks pass and package builds succeed. GitHub PostgreSQL 17 CI run 38466115426 executed all 45 tests with no skips: 45 passed in 4.60 seconds. This includes the protected reference and all five unsafe database variants. A local skip is not security evidence.
 
 ## Not implemented / limitations
 
