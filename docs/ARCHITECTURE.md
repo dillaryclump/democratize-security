@@ -24,7 +24,7 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | Component | Target location | Responsibility and boundary |
 | --- | --- | --- |
 | Contracts | `src/democratize_security/contracts.py` | Implemented v1 offline campaign validation/planning; expand with versioned records |
-| CLI | `src/democratize_security/cli.py` | Implemented `validate` and `plan`; other commands remain unavailable |
+| CLI | `src/democratize_security/cli.py` | Implemented `validate`, `plan`, `seal` and `inspect-artifact`; no execution CLI |
 | Controller | future `controller/` within Python package | Reserve budgets, schedule finite trials, persist transitions; never import workload code |
 | Store | future `store/` | SQLite metadata, append-only events and content-addressed artifacts; backup/recovery |
 | Runner adapters | future `adapters/runners/` | Harbor first; framework-specific APIs remain behind project-owned contracts |

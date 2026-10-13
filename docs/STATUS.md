@@ -32,3 +32,9 @@ Update this file with actually observed commands/results, limitations and the ne
 ## M2 artifact prerequisite (current follow-up)
 
 Implemented explicit-allowlist sealing, bounded canonical bundles, integrity inspection, no-overwrite publication and artifact/verifier/result hash binding. See ARTIFACTS.md. This does not establish execution provenance or worker isolation; those remain the next integration task.
+
+Artifact PR #8 validation: 62 local tests passed, 12 PostgreSQL tests skipped; Ruff and builds passed. GitHub CI run 38481516104 ran all 74 tests against PostgreSQL 17 with no skips.
+
+## M2 offline worker capability probe
+
+Implemented a fixed-command Docker probe for reviewed synthetic sealed artifacts, restricted local execution, bounded output/time and execution records. Harbor remains the intended agent runner. See WORKER_PROBE.md. Local validation: 67 tests pass, 18 PostgreSQL/Docker tests explicitly skip; Ruff passes. Live Docker CI is the acceptance gate. No paid execution or full M2 completion is claimed.

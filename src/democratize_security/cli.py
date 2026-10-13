@@ -1,4 +1,4 @@
-"""Offline validation and planning only; no model, database or worker access."""
+"""Offline campaign planning and artifact sealing/inspection; no workload execution."""
 
 import argparse
 import json
