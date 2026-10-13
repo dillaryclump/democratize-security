@@ -54,7 +54,7 @@ def summarize(checks: list[Check]) -> dict:
     )
     return {
         "schema_version": 1,
-        "protocol": "synthetic-reference-v1",
+        "protocol": "synthetic-reference-v2",
         "coverage": "complete" if complete else "incomplete",
         "outcome": ("pass" if all(c.outcome == "pass" for c in checks) else "fail")
         if complete
@@ -167,6 +167,30 @@ def verify(client: httpx.Client, runtime_dsn: str) -> dict:
 
     def identity():
         for path in ("/invoices", "/invoices/1", "/invoices/export"):
+            for headers in (
+                {"Authorization": "Bearer"},
+                {"Authorization": "Basic fixture-alice"},
+                {"Authorization": "Bearer  fixture-alice"},
+                {"Authorization": "Bearer fixture-alice, Bearer fixture-bob"},
+                [
+                    ("Authorization", "Bearer fixture-alice"),
+                    ("Authorization", "Bearer fixture-bob"),
+                ],
+                [
+                    ("Authorization", "Bearer fixture-bob"),
+                    ("Authorization", "Bearer fixture-alice"),
+                ],
+                [
+                    ("Authorization", "Bearer fixture-alice"),
+                    ("Authorization", "Bearer fixture-alice"),
+                ],
+            ):
+                response = client.get(path, headers=headers)
+                _require(
+                    response.status_code == 401
+                    and response.json() == {"detail": "Authentication required"},
+                    "Ambiguous authentication accepted",
+                )
             for response, status, detail in (
                 (client.get(path), 401, "Authentication required"),
                 (get(path, "invalid"), 401, "Authentication required"),

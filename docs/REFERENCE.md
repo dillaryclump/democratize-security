@@ -1,16 +1,18 @@
 # Synthetic reference and public verifier
 
-## Concrete contract v1
+## Concrete contract v2
 
 This implementation makes M0 assumptions reviewable. It does not claim Dillon has approved a production identity design. Alice belongs to org-a; Bob belongs to org-b; an unassigned identity has no membership. Fixed bearer strings `fixture-alice`, `fixture-bob` and `fixture-unassigned` are PUBLIC TEST FIXTURES, not secrets or deployable authentication. Server-owned mappings choose the tenant; tenant headers and query parameters never do.
 
 - `GET /invoices/{id}`: exact own-tenant invoice fields; foreign and missing IDs both return 404 with `{"detail":"Invoice not found"}`.
 - `GET /invoices`: ordered own-tenant records, bounded limit/offset and literal case-insensitive substring search via `q`.
 - `GET /invoices/export`: all own-tenant fixture rows, exactly id/description/amount_cents columns.
-- Missing/invalid authentication: 401. Valid identity without membership: 403. Both return only a fixed error detail.
+- Missing/invalid authentication, duplicate Authorization fields, combined tokens and malformed bearer values: 401. Valid identity without membership: 403. Both return only a fixed error detail.
 - Invoice IDs, descriptions, amounts and membership are protected. No cross-tenant totals are exposed. Timing, comprehensive side channels and free-form spreadsheet formula handling are outside this synthetic fixture's claim.
 
 The application intentionally contains no tenant WHERE filter. A restricted PostgreSQL role and RLS policy enforce rows using transaction-local `app.tenant_id`. The runtime role cannot own the table, bypass RLS, create schema objects or write invoices. Setup uses a separate identity. A one-connection pool makes reuse observable in tests. This does not contain hostile server code that intentionally sets a different tenant context.
+
+Database and pool errors return a fixed 503 JSON response without SQL or connection details. Invoice IDs are bounded to the database integer range; invalid IDs/pagination/search lengths return 422. These defaults are fixture behavior, not a general API authentication standard.
 
 ## What the verifier proves and does not prove
 
@@ -61,7 +63,7 @@ The fixture intentionally does not provision or expose a permanent database/serv
 | Endpoint unavailable | Incomplete, never pass |
 | Endpoint returns empty 200 everywhere | Functionality failure, never pass |
 
-A separate real-pool integration test proves transaction context clears after success and division-by-zero rollback on the same PostgreSQL backend connection before tenant B is used. It does not yet exercise an HTTP-level application database-error recovery path. This remaining gap must stay visible.
+A separate real-pool integration test proves transaction context clears after success and division-by-zero rollback on the same PostgreSQL backend connection before tenant B is used. The HTTP recovery test revokes SELECT after startup, makes authenticated requests through all three invoice endpoints, checks sanitized 503 responses, restores permission and verifies tenant B on the same backend PID. A concurrent two-tenant test queues 20 requests through the one-connection pool. Input-validation failures must also leave subsequent requests working.
 
 ## Observed validation
 
@@ -69,4 +71,8 @@ GitHub Actions run [38466115426](https://github.com/dillaryclump/democratize-sec
 
 ## Next bounded work
 
-Add HTTP error/recovery and broader identity edge cases, then externalize schema/fixture provisioning only if needed for a usable demonstration. Review M0 defaults with Dillon. M2 then proves sealed-artifact verification and protected worker separation with three actual tasks. Do not enable model calls, final grading or automated search based on these fixture tests alone.
+Confirm the v2 identity/recovery checks in real PostgreSQL CI, then externalize schema/fixture provisioning only if needed for a usable demonstration. Review M0 defaults with Dillon. M2 then proves sealed-artifact verification and protected worker separation with three actual tasks. Do not enable model calls, final grading or automated search based on these fixture tests alone.
+
+## Protocol revision history
+
+`synthetic-reference-v2` adds malformed/ambiguous authentication cases to the required identity check. v1 evidence remains tied to its original revision; the stronger v2 checks are not retroactively attributed to v1. HTTP failure injection and concurrency are harness integration tests, not new required groups in the standalone read-only verifier.

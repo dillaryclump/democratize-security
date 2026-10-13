@@ -10,18 +10,23 @@ import os
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
+from fastapi.responses import JSONResponse, Response
+from psycopg import Error as DatabaseError
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 IDENTITIES = {"fixture-alice": "org-a", "fixture-bob": "org-b", "fixture-unassigned": None}
 
 
-def tenant(authorization: Annotated[str | None, Header()] = None) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
+def tenant(authorization: Annotated[list[str] | None, Header()] = None) -> str:
+    # Reject ambiguity instead of picking one identity from duplicate headers.
+    if not authorization or len(authorization) != 1:
         raise HTTPException(401, "Authentication required")
-    token = authorization.removeprefix("Bearer ")
+    value = authorization[0]
+    if not value.startswith("Bearer "):
+        raise HTTPException(401, "Authentication required")
+    token = value.removeprefix("Bearer ")
     if token not in IDENTITIES:
         raise HTTPException(401, "Authentication required")
     organization = IDENTITIES[token]
@@ -46,6 +51,13 @@ def create_app() -> FastAPI:
             yield
 
     app = FastAPI(title="Synthetic tenant-isolation reference", lifespan=lifespan)
+
+    @app.exception_handler(DatabaseError)
+    @app.exception_handler(PoolTimeout)
+    async def database_unavailable(request, error):
+        # The connection context has rolled back before the exception reaches
+        # this handler. Never return SQL, connection details or invoice data.
+        return JSONResponse(status_code=503, content={"detail": "Invoice service unavailable"})
 
     def rows(organization: str, query: str, parameters: tuple) -> list[dict]:
         # Transaction-local context disappears on commit AND rollback. There is
@@ -91,7 +103,10 @@ def create_app() -> FastAPI:
         return Response(output.getvalue(), media_type="text/csv")
 
     @app.get("/invoices/{invoice_id}")
-    def invoice(invoice_id: int, organization: Annotated[str, Depends(tenant)]):
+    def invoice(
+        invoice_id: Annotated[int, Path(ge=1, le=2147483647)],
+        organization: Annotated[str, Depends(tenant)],
+    ):
         found = rows(
             organization,
             """

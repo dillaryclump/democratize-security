@@ -3,6 +3,89 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
+def test_http_database_error_rolls_back_and_next_tenant_recovers(database, serve):
+    import psycopg
+    from psycopg import sql
+
+    from democratize_security.verification.reference import EXPECTED, verify
+
+    with (
+        serve(database.runtime) as client,
+        psycopg.connect(database.admin, autocommit=True) as setup,
+    ):
+        alice = {"Authorization": "Bearer fixture-alice"}
+        bob = {"Authorization": "Bearer fixture-bob"}
+        assert client.get("/invoices", headers=alice).json() == EXPECTED["fixture-alice"]
+
+        def backend():
+            return setup.execute(
+                "SELECT pid FROM pg_stat_activity WHERE usename = %s", (database.role,)
+            ).fetchall()
+
+        before = backend()
+        assert len(before) == 1
+        setup.execute(
+            sql.SQL("REVOKE SELECT ON public.invoices FROM {}").format(
+                sql.Identifier(database.role)
+            )
+        )
+        try:
+            # set_config succeeds, then the invoice SELECT raises a real SQL error.
+            for path in ("/invoices/1", "/invoices", "/invoices/export"):
+                response = client.get(path, headers=alice)
+                assert response.status_code == 503
+                assert response.json() == {"detail": "Invoice service unavailable"}
+        finally:
+            setup.execute(
+                sql.SQL("GRANT SELECT ON public.invoices TO {}").format(
+                    sql.Identifier(database.role)
+                )
+            )
+        assert backend() == before, "Recovery must reuse the same database session"
+        response = client.get("/invoices", headers=bob)
+        assert response.status_code == 200
+        assert response.json() == EXPECTED["fixture-bob"]
+        assert client.get("/invoices/1", headers=bob).status_code == 404
+        assert verify(client, database.runtime)["outcome"] == "pass"
+
+
+def test_concurrent_tenants_keep_their_own_data(database, serve):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from democratize_security.verification.reference import EXPECTED
+
+    with serve(database.runtime) as client:
+
+        def request(token):
+            response = client.get("/invoices", headers={"Authorization": f"Bearer {token}"})
+            assert response.status_code == 200
+            assert response.json() == EXPECTED[token]
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(request, ["fixture-alice", "fixture-bob"] * 10))
+
+
+def test_invalid_inputs_do_not_break_following_requests(database, serve):
+    from democratize_security.verification.reference import EXPECTED
+
+    with serve(database.runtime) as client:
+        headers = {"Authorization": "Bearer fixture-alice"}
+        for path in (
+            "/invoices/0",
+            "/invoices/-1",
+            "/invoices/2147483648",
+            "/invoices/not-an-id",
+            "/invoices?limit=0",
+            "/invoices?limit=101",
+            "/invoices?offset=-1",
+            "/invoices?q=" + "a" * 101,
+        ):
+            assert client.get(path, headers=headers).status_code == 422
+        response = client.get("/invoices", headers={"Authorization": "Bearer fixture-bob"})
+        assert response.status_code == 200
+        assert response.json() == EXPECTED["fixture-bob"]
+
+
 def test_protected_reference_passes_without_application_tenant_filter(database, serve):
     from democratize_security.verification.reference import verify
 

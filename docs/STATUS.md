@@ -1,6 +1,6 @@
 # Current status and next handoff
 
-Updated: 2026-10-13. Stage: M0 concrete reference defaults; M1 first implementation slice.
+Updated: 2026-10-13. Stage: M0 concrete reference defaults; M1 identity and HTTP recovery slice.
 
 ## Implemented
 
@@ -17,11 +17,11 @@ Local Python 3.12: 36 tests pass, 9 PostgreSQL integration tests explicitly skip
 
 ## Not implemented / limitations
 
-No production identity provider, HTTP-level database-error recovery test, sealed-artifact provenance, protected holdout verifier, hostile-workload isolation, Harbor/GEPA adapter, durable run store, paid execution or benchmark result. The public verifier is fixed to the synthetic dataset and trusts the harness to supply the app's actual runtime DSN. Core commands remain dependency-free; reference dependencies are optional.
+No production identity provider, sealed-artifact provenance, protected holdout verifier, hostile-workload isolation, Harbor/GEPA adapter, durable run store, paid execution or benchmark result. The public verifier is fixed to the synthetic dataset and trusts the harness to supply the app's actual runtime DSN. Core commands remain dependency-free; reference dependencies are optional.
 
 ## Decisions and next work
 
-Review the concrete reference access contract in REFERENCE.md and ADR 0003. Production identity and final-study semantics remain pending founder acceptance. Next: finish M1 HTTP error/recovery and identity edge cases, then prove M2 worker isolation and artifact sealing with three real tasks. A dedicated worker host and finite model budget are still required before agent execution.
+Review the concrete reference access contract in REFERENCE.md and ADR 0003. Production identity and final-study semantics remain pending founder acceptance. Implemented next slice: sanitized HTTP database errors, real permission-failure/recovery on the same backend, malformed/duplicate auth checks, input bounds and concurrent tenant requests. Local suite: 36 pass, 12 database tests skip; v2 PostgreSQL CI pending. Next: review M0 contract and prove M2 worker isolation and artifact sealing with three real tasks. A dedicated worker host and finite model budget are still required before agent execution.
 
 License choice, main-branch protections (including postgres-reference), and private vulnerability reporting remain repository-owner setup decisions. No open-source license or paid infrastructure was provisioned.
 
