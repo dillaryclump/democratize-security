@@ -29,7 +29,7 @@ packages = ["src/democratize_security"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: requires a disposable real PostgreSQL server"]
+markers = ["integration: requires a disposable real PostgreSQL server", "worker: requires local Linux Docker and a trusted image"]
 
 [tool.ruff]
 target-version = "py312"
