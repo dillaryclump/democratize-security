@@ -11,6 +11,7 @@ from democratize_security.adapters.runners.harbor_audit import (
     SIDECAR,
     audit,
     compose_project,
+    declared_exec_users,
     declared_limits,
 )
 
@@ -121,8 +122,11 @@ def observed(tmp_path):
     return trial, containers, events
 
 
-def run(trial, containers, events, egress=EGRESS, secret=SECRET, host_uid=HOST_UID):
-    return audit(TRIAL, trial, list(containers.values()), events, LIMITS, egress, secret, host_uid)
+def run(trial, containers, events, egress=EGRESS, secret=SECRET, exec_users=()):
+    inspections = list(containers.values())
+    return audit(
+        TRIAL, trial, inspections, events, LIMITS, egress, secret, HOST_UID, list(exec_users)
+    )
 
 
 def outcomes(record):
@@ -185,6 +189,13 @@ def test_hardened_harbor_shape_passes_with_only_harbor_owned_gaps(observed, tmp_
         ("verifier_extra_cap", "least_privilege"),
         ("caps_not_dropped", "least_privilege"),
         ("new_privileges", "least_privilege"),
+        ("late_new_privileges", "least_privilege"),
+        ("zero_padded_root", "least_privilege"),
+        ("signed_root", "least_privilege"),
+        ("toml_exec_user", "least_privilege"),
+        ("late_exec_tmpfs", "mount_scope"),
+        ("sidecar_tmpfs", "mount_scope"),
+        ("unlimited_pids", "bounded_resources"),
         ("no_pids_limit", "bounded_resources"),
         ("swap", "bounded_resources"),
         ("writable_root", "bounded_resources"),
@@ -195,7 +206,7 @@ def test_boundary_violation_fails(observed, mutation, check):
     trial, containers, events = copy.deepcopy(observed)
     agent, verifier = containers["agent"], containers["verifier"]
     host = {"agent": agent["HostConfig"], "verifier": verifier["HostConfig"]}
-    egress = EGRESS
+    egress, exec_users = EGRESS, ()
     if mutation == "privileged":
         host["verifier"]["Privileged"] = True
     elif mutation == "sidecar_cap":
@@ -270,6 +281,22 @@ def test_boundary_violation_fails(observed, mutation, check):
         host["verifier"]["CapDrop"] = None
     elif mutation == "new_privileges":
         host["agent"]["SecurityOpt"] = None
+    elif mutation == "late_new_privileges":
+        # Docker applies options in order, so the last entry wins.
+        host["verifier"]["SecurityOpt"].append("no-new-privileges:false")
+    elif mutation == "zero_padded_root":
+        agent["Config"]["User"] = "00:00"
+    elif mutation == "signed_root":
+        verifier["Config"]["User"] = "+0"
+    elif mutation == "toml_exec_user":
+        # Harbor would `exec -u root`, overriding the observed container user.
+        exec_users = [("agent", "root")]
+    elif mutation == "late_exec_tmpfs":
+        host["agent"]["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,exec,size=16m"
+    elif mutation == "sidecar_tmpfs":
+        containers["verifier_sidecar"]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec"}
+    elif mutation == "unlimited_pids":
+        host["agent"]["PidsLimit"] = 0
     elif mutation == "no_pids_limit":
         host["verifier"]["PidsLimit"] = None
     elif mutation == "swap":
@@ -278,7 +305,7 @@ def test_boundary_violation_fails(observed, mutation, check):
         host["verifier"]["ReadonlyRootfs"] = False
     else:
         agent["Config"]["Env"].append(f"DS_NONCE={SECRET}")
-    record = run(trial, containers, events, egress)
+    record = run(trial, containers, events, egress, exec_users=exec_users)
     assert record["outcome"] == "fail", record
     assert outcomes(record)[check] == "fail", record
 
@@ -318,3 +345,13 @@ def test_project_names_and_declared_limits_follow_pinned_harbor():
     assert compose_project("RLS-Policy__AbC.1__env") == "rls-policy__abc-1__env"
     assert compose_project("_x") == "0_x"
     assert declared_limits(ROOT / "tasks/harbor/rls-policy/task.toml") == LIMITS
+
+
+def test_declared_exec_users_cover_task_and_steps(tmp_path):
+    assert declared_exec_users(ROOT / "tasks/harbor/rls-policy/task.toml") == []
+    toml = tmp_path / "task.toml"
+    toml.write_text(
+        '[agent]\nuser = "root"\n[verifier]\ntimeout_sec = 1\n'
+        "[[steps]]\nname = 'one'\n[steps.verifier]\nuser = 0\n"
+    )
+    assert declared_exec_users(toml) == [("agent", "root"), ("verifier", 0)]

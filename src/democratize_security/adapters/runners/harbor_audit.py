@@ -62,6 +62,31 @@ def declared_limits(task_toml: Path) -> dict:
     }
 
 
+def declared_exec_users(task_toml: Path) -> list[tuple[str, object]]:
+    """task.toml users Harbor would pass as `exec -u`, overriding the audited
+    container user. The hardened layout requires none."""
+    config = tomllib.loads(task_toml.read_text())
+    sections = [config] + config.get("steps", [])
+    return [
+        (role, section[role]["user"])
+        for section in sections
+        for role in ("agent", "verifier")
+        if "user" in section.get(role, {})
+    ]
+
+
+def _is_root(user: str) -> bool:
+    # Docker resolves numeric strings (including "00" or "+0") as uids.
+    name = user.split(":")[0].strip()
+    return name in {"", "root"} or bool(re.fullmatch(r"[+-]?\d+", name) and int(name) == 0)
+
+
+def _last_flag(values, flags: set[str]) -> str | None:
+    # Docker applies repeated security and mount options in order; the last wins.
+    matches = [value for value in values if value.split("=")[0].split(":")[0] in flags]
+    return matches[-1] if matches else None
+
+
 def _labels(container: dict) -> tuple[str, str]:
     labels = container["Config"].get("Labels") or {}
     return labels.get("com.docker.compose.project", ""), labels.get(
@@ -120,11 +145,13 @@ def audit(
     egress: dict,
     secret: str,
     host_uid: int,
+    exec_users: list,
 ) -> dict:
     """Evaluate one trial's observed containers. Missing evidence is incomplete.
 
     `secret` is the verifier-only nonce; no container configuration may hold it.
     `host_uid` owns the trial directories Harbor bind-mounts into both containers.
+    `exec_users` are task.toml users that would override the containers' own.
     """
     agent_project = compose_project(f"{trial_name}__env")
     verifier_project = compose_project(f"{trial_name}__verifier__trial")
@@ -213,7 +240,8 @@ def audit(
                 is_main = _labels(container)[1] == "main"
                 tmpfs = container["HostConfig"].get("Tmpfs") or {}
                 if not set(tmpfs) <= (TMPFS if is_main else set()) or any(
-                    "noexec" not in options.split(",") for options in tmpfs.values()
+                    _last_flag(options.split(","), {"exec", "noexec"}) != "noexec"
+                    for options in tmpfs.values()
                 ):
                     raise AssertionError("Unexpected or executable tmpfs in trial container")
                 declared = set(container["Config"].get("Volumes") or {})
@@ -252,11 +280,15 @@ def audit(
             raise AssertionError("Host listener observed a connection during the trial")
 
     def least_privilege():
+        if exec_users:
+            # Harbor would run agent or verifier commands as this user instead
+            # of the container user observed below.
+            raise AssertionError("task.toml overrides the audited container user")
         for project, role in roles.items():
             container = main(project)
             host = container["HostConfig"]
             user = container["Config"].get("User") or ""
-            if user.split(":")[0] in {"", "0", "root"}:
+            if _is_root(user):
                 raise AssertionError(f"{role} main container runs as root")
             # An owner may chmod a directory without capabilities, so an agent
             # sharing the host uid could lock the verifier log directory.
@@ -269,9 +301,12 @@ def audit(
                 or not set(host.get("CapAdd") or []) <= ROLE_CAPS[role]
             ):
                 raise AssertionError(f"{role} capabilities exceed its allowance")
-            if not {"no-new-privileges", "no-new-privileges:true"} & set(
-                host.get("SecurityOpt") or []
-            ):
+            last = _last_flag(host.get("SecurityOpt") or [], {"no-new-privileges"})
+            if last not in {
+                "no-new-privileges",
+                "no-new-privileges:true",
+                "no-new-privileges=true",
+            }:
                 raise AssertionError(f"{role} may gain privileges")
 
     def bounded():
@@ -331,7 +366,7 @@ def audit(
                 continue
             if summary["network"] == "egress_sidecar_namespace":
                 gaps.add("network_via_net_admin_sidecar")
-            if summary["user"].split(":")[0] in {"", "0", "root"}:
+            if _is_root(summary["user"]):
                 gaps.add(f"{role}_runs_as_root")
             if "ALL" not in summary["cap_drop"]:
                 gaps.add(f"{role}_default_capabilities")

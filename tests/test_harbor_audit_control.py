@@ -26,6 +26,8 @@ def test_generated_task_is_trusted_files_plus_reviewed_solution(control, tmp_pat
     assert files == sorted([*control["TRUSTED_FILES"], "solution/solve.sh"])
     for name in control["TRUSTED_FILES"]:
         assert (task / name).read_bytes() == (control["harbor_spike"].TASK / name).read_bytes()
+    # Harbor's root chmod has no capabilities, so the bit must already be set.
+    assert (task / "solution/solve.sh").stat().st_mode & 0o005 == 0o005
     solve = (task / "solution/solve.sh").read_text()
     assert "43210" in solve and "/logs/verifier/reward.json" in solve
     with pytest.raises(FileExistsError):
@@ -77,3 +79,16 @@ def test_forgery_is_otherwise_a_complete_pass(control, tmp_path):
     (trial / "verifier/policy-evidence.json").write_text(json.dumps(evidence))
     accepted = spike.accept_result(tmp_path, "oracle", 1, "c" * 64)
     assert accepted["reward"] == 1 and all(accepted["checks"].values())
+
+
+def test_committed_oracle_solution_is_executable_by_the_unprivileged_agent():
+    # docker cp keeps the host owner (the CI runner), so Harbor's capability-less
+    # root cannot chmod it; the committed mode must already allow execution.
+    import subprocess
+
+    path = "tasks/harbor/rls-policy/solution/solve.sh"
+    staged = subprocess.run(
+        ["git", "ls-files", "-s", path], capture_output=True, text=True, check=True, cwd=ROOT
+    ).stdout
+    assert staged.startswith("100755 ")
+    assert (ROOT / path).stat().st_mode & 0o005 == 0o005

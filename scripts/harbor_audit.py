@@ -18,7 +18,11 @@ import time
 
 import harbor_spike
 
-from democratize_security.adapters.runners.harbor_audit import audit, declared_limits
+from democratize_security.adapters.runners.harbor_audit import (
+    audit,
+    declared_exec_users,
+    declared_limits,
+)
 from democratize_security.artifacts import seal
 from democratize_security.policy_replay import AGENT_BASE_IMAGE, write_record
 
@@ -115,7 +119,11 @@ def prepare_tamper(destination, port):
         shutil.copyfile(harbor_spike.TASK / name, target)
     (destination / "solution").mkdir()
     probe = PROBE.replace("PORT", str(port)).strip()
-    (destination / "solution/solve.sh").write_text(SOLVE.format(forge=forge, probe=probe))
+    solve = destination / "solution/solve.sh"
+    solve.write_text(SOLVE.format(forge=forge, probe=probe))
+    # docker cp keeps the host owner, so Harbor's capability-less root chmod
+    # fails on CI; the unprivileged agent needs the bit already set.
+    solve.chmod(0o755)
 
 
 class Listener:
@@ -258,6 +266,7 @@ def main():
         {"control_connections": control_connections, "trial_connections": trial_connections},
         nonce,
         os.getuid(),
+        declared_exec_users(task / "task.toml"),
     )
     final = sorted(path.name for path in (trial / "verifier").iterdir())
     summary = {

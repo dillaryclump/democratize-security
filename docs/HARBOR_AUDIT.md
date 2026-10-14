@@ -53,11 +53,11 @@ Acceptance requires all of:
 | `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides, different images; every started trial container was inspected |
 | `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before the verifier's first `start` |
 | `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
-| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp`, `noexec` |
+| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag |
 | `declared_limits` | Memory and CPU equal `task.toml` |
 | `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace) |
 | `no_observed_egress` | Positive control observed; no trial connection reached the host |
-| `least_privilege` | Non-root; capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER`; `no-new-privileges`; the agent has an explicit `uid:gid` different from the controller's |
+| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER`; the last `no-new-privileges` option is true; the agent has an explicit `uid:gid` different from the controller's; task.toml sets no exec user |
 | `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem |
 | `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration |
 
@@ -69,9 +69,11 @@ and mounts.
 ## Hardened task configuration
 
 Harbor 0.24.0 merges a task's `environment/docker-compose.yaml` (agent) and
-`tests/docker-compose.yaml` (separate verifier) after its own overlays. It never
-sets the hardening keys on the main containers, and it stops routing main
-through its egress sidecar when `network_mode` is a literal key there. Run-level
+`tests/docker-compose.yaml` (separate verifier) after its resources and build
+files, then adds its environment, mounts and egress-sidecar overlays. None of
+those overlays set the hardening keys on the main containers. Harbor stops
+routing main through its egress sidecar only when `network_mode` is a literal key
+in the task file. Run-level
 `--extra-docker-compose` files are not applied to separate verifiers, so the
 verifier file must live in `tests/`. These findings come from reading the
 pinned source and were confirmed against live `docker inspect` output.
@@ -87,7 +89,13 @@ pinned source and were confirmed against live `docker inspect` output.
 
 The verifier image sets `test.sh` and `check.py` executable at build time,
 because Harbor's runtime `chmod` silently fails on a read-only root. `test.sh`
-runs PostgreSQL as the unprivileged user directly, with no `runuser`.
+runs PostgreSQL as the unprivileged user directly, with no `runuser`. The oracle
+and tamper `solve.sh` files are executable before upload. `docker cp` keeps
+the host owner (the CI runner), so Harbor's capability-less root `chmod` cannot
+set the bit, and the agent would otherwise get `Permission denied` and a silent
+reward of 0. This was reproduced with a uid-1001-owned copy and fixed. task.toml
+sets no `[agent]` or `[verifier]` user, because Harbor would pass it as `exec -u`
+and override the audited container user. The audit fails if one appears.
 
 ## Evidence binding
 
@@ -113,9 +121,12 @@ accepted even if Harbor's directory cleanup failed.
 | Agent network probe | TCP handshake to Harbor's local proxy; external DNS resolved; ICMP echo answered | No default route |
 | Agent / verifier user | root / root, default capabilities | `10001:10001` with no capabilities / `postgres` with three |
 | Forgery | Observed, then discarded by Harbor | Observed, discarded, and cryptographically unacceptable |
-| CI (GitHub runner, cgroup v2) | 7/7, same gaps, DNS/ICMP open | Pending this change's CI |
+| CI (GitHub runner, cgroup v2) | 7/7 with the same gaps and DNS/ICMP open: [run 38598202622](https://github.com/dillaryclump/democratize-security/actions/runs/38598202622) at `a655e35` | Pending this change's CI |
 
-v1 evidence is not retroactively relabeled as v2. Remaining v2 gaps:
+The network probe row is the reviewed control's self-reported diagnostic, not
+listener-verified. For v2 it is corroborated by the daemon-observed
+`network_mode: none`. v1 evidence is not retroactively relabeled as v2.
+Remaining v2 gaps:
 
 - `agent_can_write_verifier_log_directory`: Harbor mounts the shared directory
   into the agent itself. The nonce binding and `reward.json` rejection make a

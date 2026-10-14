@@ -1,5 +1,6 @@
 # Reviewed verifier hardening for Harbor 0.24.0's separate verifier, which uses
-# this directory as its environment. Keep network_mode a literal key (see the
+# this directory as its environment and merges it like the agent's file. Keep
+# network_mode a literal key and set no [verifier] user in task.toml (see the
 # agent's environment/docker-compose.yaml).
 services:
   main:

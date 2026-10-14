@@ -127,7 +127,7 @@ experiments:
   must differ from the controller's.
 
 Local evidence (Docker 29.8.2, cgroup v1, PostgreSQL 16):
-- Full suite: 167 passed, no skips. Core-only: 148 passed, 19 skipped. Ruff
+- Full suite: 176 passed, no skips. Ruff
   passes.
 - Hardened controls and sealed replays: oracle 1 / nop 0. Bundle hashes are
   unchanged (`6fb653ff…`, `34da710d…`).
@@ -135,6 +135,14 @@ Local evidence (Docker 29.8.2, cgroup v1, PostgreSQL 16):
   reward was 0.
 - The agent probe reports no default route. Gaps fell from 14 to 3: Harbor's
   shared log mount (now non-grading) and storage limits.
+
+An adversarial review then found two CI-only failures that a root-owned local
+checkout hides. `docker cp` keeps the runner's uid on uploaded scripts, so
+Harbor's capability-less root `chmod` failed and both the oracle and the tamper
+`solve.sh` hit `Permission denied`, with a silent reward of 0. Both scripts are
+now executable before upload; the failure and the fix were reproduced with
+uid-1001-owned copies. The review also found that a task.toml exec user would
+override the audited container user; the audit now fails if one is set.
 
 Live CI for this change is pending. Next: the three application tasks under this
 layout. No model calls, spending or hostile-candidate execution are authorized.
