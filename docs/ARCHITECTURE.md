@@ -1,6 +1,6 @@
 # System architecture
 
-Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
+Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
 
 ## Three separate authority domains
 

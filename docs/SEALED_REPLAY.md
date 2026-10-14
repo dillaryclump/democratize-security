@@ -43,14 +43,15 @@ Code: `policy_replay.py` prepares and binds data without importing Harbor;
 The seal is now an input to replay verification, rather than only a post-hoc
 comparison. However, Harbor still collects/transfers files before host acceptance;
 this change does not make its extraction safe for arbitrary hostile workers.
-The code supports reviewed JSON policies only. Image tags and apt packages remain
-mutable; task/verifier source hashes do not identify the entire runtime image.
+The code supports reviewed JSON policies only. Base images are digest-pinned, but
+apt packages remain mutable; task/verifier source hashes do not identify the
+entire runtime image.
 No dedicated-host approval, protected tests, model budget, persistence/recovery,
 or application-task gate is implied. Outputs on hosted CI runners are ephemeral;
 checked summaries are printed to logs, with observed evidence recorded below.
 
-Next: pin runtime images and audit actual mounts/resource controls, then integrate
-three real application tasks with independent HTTP/database checks. Preserve this
+Next: close the gaps recorded by the [boundary audit](HARBOR_AUDIT.md), then
+integrate three real application tasks with independent HTTP/database checks. Preserve this
 small replay regression when expanding the runner.
 
 ## Validation

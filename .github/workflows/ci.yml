@@ -94,3 +94,5 @@ jobs:
           docker compose version
       - name: Run controls and sealed replays in separate verifier containers
         run: uv run --locked --group harbor python scripts/harbor_replay.py
+      - name: Audit observed container boundary with a reviewed tamper control
+        run: uv run --locked --group harbor python scripts/harbor_audit.py

@@ -50,15 +50,16 @@ Harbor's artifact collection and conventional `/logs/artifacts` transfer are not
 our hardened allowlist boundary. Host sealing happens after Harbor verification;
 the original spike alone does not enforce sealed-only replay. The follow-up
 [sealed policy replay](SEALED_REPLAY.md) now verifies fresh tasks constructed from
-those pre-existing bundles. Image tags
-and apt packages are mutable, even though Harbor/Python dependencies are locked.
-Storage configuration is a request, not evidence of Docker disk enforcement.
+those pre-existing bundles. Base images are now digest-pinned, but apt packages
+remain mutable, even though Harbor/Python dependencies are locked. The
+[boundary audit](HARBOR_AUDIT.md) observed that storage requests are not enforced
+and that `no-network` still permits DNS and ICMP.
 The spike has no recovery controller, adversarial containment proof, private tests,
 production identity, or independent application HTTP assessment. A killed host
 process may require container cleanup; use disposable runners.
 
-Next: retain the sealed policy replay regression, pin and record image digests,
-audit actual mounts/resource/network enforcement, then adapt read/list/export
+Next: retain the sealed policy replay regression and the boundary audit, close
+the gaps it records, then adapt read/list/export
 application tasks using the independent HTTP/database verifier. Establish the
 three-task fresh-replay gate and dedicated-host policy before model execution.
 Do not infer M2 completion from an oracle reward of 1.

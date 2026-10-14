@@ -68,3 +68,38 @@ bound replay evidence. See SEALED_REPLAY.md. Initial grades are diagnostic only.
 Local: 82 passed, 20 skipped; Ruff and generated-task schema load pass. Live CI
 pending. Next: runtime image provenance/worker audit and three application tasks.
 This advances M2 prerequisites without completing M2 or authorizing model calls.
+
+## Harbor boundary audit (2026-10-14)
+
+Pinned task base images by multi-arch index digest and added a host-observed
+audit of the containers Harbor 0.24.0 actually creates, with one reviewed
+grade-forgery and network tamper control. See HARBOR_AUDIT.md. Gating inputs are
+`docker events`/`inspect` and a host TCP listener, never candidate output.
+
+Local evidence (disposable cloud container, Docker 29.8.2, cgroup v1): full
+suite 137 passed with no skips against real PostgreSQL 16 and Docker; core-only
+111 passed, 20 skipped; Ruff and build pass. With pinned images, controls and
+sealed replays reproduced the CI bundle hashes `6fb653ff…` (oracle 1) and
+`34da710d…` (nop 0). Tamper control: forged `reward.json`, `reward.txt` and
+all-pass evidence were observed at agent stop and then discarded; the genuine
+reward was 0; all seven audit checks passed; the network positive control
+reached the host once and the trial reached it zero times.
+
+Recorded gaps, which block model-generated or hostile candidates: the agent has
+the trial's verifier log directory mounted read-write (Harbor reads
+`reward.json` first; protection relies on agent stop and directory emptying);
+Harbor `no-network` permits external DNS and ICMP; agent and verifier run as
+root with default capabilities, writable root filesystem, no PID limit, swap
+twice the memory limit and no storage limit. Apt packages remain mutable.
+
+Negative local observation: against a SQL_ASCII-encoded local cluster the
+protected reference failed `exports` because psycopg returned bytes; the CSV
+contained `b'…'` values and the verifier correctly failed it. A UTF-8 cluster
+passed. The test fixture does not pin database encoding; CI's PostgreSQL image
+defaults to UTF-8. Pinning `ENCODING 'UTF8'` in the fixture is a small follow-up.
+
+Live CI for this change is pending: the workflow runs on pull requests and named
+branches only. Next: reviewed task compose overrides (no network, non-root,
+dropped capabilities, PID/swap/read-only limits) proven by rerunning the audit,
+and a verifier-only evidence nonce; then three application tasks. No model
+calls, spending or hostile-candidate execution are authorized by this audit.
