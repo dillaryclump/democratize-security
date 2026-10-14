@@ -68,6 +68,22 @@ Pinned upstream contracts:
 
 ## Validation
 
-Local Python 3.12: 81 passed, 19 infrastructure tests skipped. Harbor's pinned
-schema successfully loads the task. Live Docker execution remains the CI gate;
-local skips are not execution evidence.
+Local Python 3.12 with optional dependencies: 81 passed, 19 infrastructure tests
+skipped. Core-only locked environment: 74 passed, 20 skipped. Ruff checks and
+package build passed. Harbor's pinned schema successfully loads the task.
+
+[CI run 38577845657](https://github.com/dillaryclump/democratize-security/actions/runs/38577845657)
+at code revision `df8eefcb4f1f6b0f157ca44553f41db0c49a6621` passed all five jobs:
+Python 3.12/3.13, PostgreSQL (93 passed, 7 Docker-only skipped), worker probe
+(all 7 container cases), and Harbor. Each Harbor control had one trial and zero
+exceptions. Oracle passed all four policy checks; nop failed all four. Host
+acceptance verified separate mode, complete evidence and matching artifact bytes.
+
+| Control | Reward | Sealed bundle SHA-256 |
+| --- | --- | --- |
+| oracle | 1 | `6fb653ffa01b9d9a31bcfe1b3979c04ed77eb07f3086acd50fa63ce445207ae1` |
+| nop | 0 | `34da710db241f00b4af2b93c64e6a1a3a4a06e04775695ed927e9b659bc8b574` |
+
+These are public infrastructure control results, not benchmark measurements.
+The checked summaries are in CI logs; raw trial directories are ephemeral on the
+hosted runner. Durable campaign evidence storage remains M3 work.

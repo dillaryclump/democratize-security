@@ -51,6 +51,11 @@ Pinned Harbor 0.24.0 in a separate dependency group. Added a public declarative
 RLS policy task, separate PostgreSQL verifier image, oracle/nop controls, strict
 result/coverage checks and post-run artifact hash matching/sealing. See HARBOR.md
 for exact boundaries and reproduction. Local: 81 passed, 19 infrastructure tests
-skipped; pinned task schema loads. Docker CI pending. This one policy fixture is
+skipped; pinned task schema loads. CI run
+[38577845657](https://github.com/dillaryclump/democratize-security/actions/runs/38577845657)
+at `df8eefcb4f1f6b0f157ca44553f41db0c49a6621` passed all five jobs. PostgreSQL:
+93 passed, 7 Docker cases skipped; worker job: all 7 container cases passed.
+Harbor: oracle 1 / nop 0, one trial each, zero exceptions, all four checks
+respectively true / false, separate mode and input hashes accepted. This one policy fixture is
 not one of the three M2 application development tasks. Next: sealed-only replay,
 image provenance and actual application tasks; no model execution authorized.
