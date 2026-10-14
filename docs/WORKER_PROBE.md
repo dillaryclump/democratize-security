@@ -29,3 +29,9 @@ No real model calls, internet-enabled candidate, PostgreSQL sidecar integration,
 Pin and inspect Harbor's separate-verifier behavior, integrate three real public development tasks, and demonstrate sealed output transfer into a fresh verifier environment without candidate access to tests or authoritative grades. Choose/approve the worker host and finite model budget before paid execution. Keep the probe as a host conformance test or retire it when equivalent adapter tests exist; do not grow a competing orchestration framework.
 
 References: [Docker resource controls](https://docs.docker.com/engine/containers/run/), [Docker security](https://docs.docker.com/engine/security/), [Harbor task configuration](https://github.com/harbor-framework/harbor/blob/main/docs/content/docs/tasks/index.mdx).
+
+## Observed regression fixes and validation
+
+The initial stdout-flood test revealed that stopping consumption while leaving Docker attached could stall `docker kill`. The controller now closes the attach process/pipe before signalling the workload. If kill races with normal exit, only a daemon-confirmed stopped state permits a record. Staging explicitly makes nested directories searchable by the unprivileged runtime regardless of the controller umask.
+
+On 2026-10-14, [CI run 38573021390](https://github.com/dillaryclump/democratize-security/actions/runs/38573021390) passed all seven real-container tests in 3.67 seconds; the separate PostgreSQL job passed 81 tests in 9.24 seconds, with its seven Docker tests delegated to the container job. Both Python matrix jobs passed. The tested code revision is `626074628cef551810216096839958a52464aa4a`. See STATUS.md for local skips and remaining gates.

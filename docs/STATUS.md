@@ -38,3 +38,9 @@ Artifact PR #8 validation: 62 local tests passed, 12 PostgreSQL tests skipped; R
 ## M2 offline worker capability probe
 
 Implemented a fixed-command Docker probe for reviewed synthetic sealed artifacts, restricted local execution, bounded output/time and execution records. Harbor remains the intended agent runner. See WORKER_PROBE.md. Local validation: 67 tests pass, 18 PostgreSQL/Docker tests explicitly skip; Ruff passes. Live Docker CI is the acceptance gate. No paid execution or full M2 completion is claimed.
+
+## Worker probe acceptance evidence (2026-10-14)
+
+CI run [38573021390](https://github.com/dillaryclump/democratize-security/actions/runs/38573021390), code revision `626074628cef551810216096839958a52464aa4a`: all four jobs passed. PostgreSQL job: 81 passed, 7 Docker cases intentionally skipped. Dedicated Docker job: all 7 container cases passed (one unrelated optional verifier module skipped during collection). Python 3.12 and 3.13 core checks passed. Local verification: 69 passed, 19 infrastructure cases skipped; Ruff formatting/lint and package build passed.
+
+The initial live run exposed a stdout backpressure shutdown timeout. The fix disconnects the attach stream before signalling the workload. Stop-race handling now requires an observed stopped state; live nested-file tests cover a restrictive controller umask. This evidence applies to the reviewed offline probe, not full M2 or a general hostile-code sandbox. Next: pinned Harbor separate-verifier integration with actual tenant-isolation development tasks and a dedicated-host gate.
