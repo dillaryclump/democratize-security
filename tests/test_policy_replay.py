@@ -1,10 +1,12 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from democratize_security.artifacts import seal, validate_evidence
+from democratize_security.contracts import digest
 from democratize_security.policy_replay import prepare_replay, record_replay, write_record
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "tasks/harbor/rls-policy"
@@ -24,7 +26,22 @@ def test_replay_uses_sealed_bytes_after_source_changes(tmp_path):
     task = tmp_path / "replay"
     manifest = prepare_replay(bundle, TEMPLATE, task)
     assert (task / "environment/policy.json").read_bytes() == original
-    assert sorted(p.name for p in (task / "environment").iterdir()) == ["Dockerfile", "policy.json"]
+    assert sorted(p.name for p in (task / "environment").iterdir()) == [
+        "Dockerfile",
+        "docker-compose.yaml",
+        "policy.json",
+    ]
+    # Replays run under the same reviewed container hardening as the task.
+    for name in ("environment/docker-compose.yaml", "tests/docker-compose.yaml"):
+        assert (task / name).read_bytes() == (TEMPLATE / name).read_bytes()
+        assert (
+            manifest["task_files"][name]
+            == hashlib.sha256((TEMPLATE / name).read_bytes()).hexdigest()
+        )
+    assert manifest["verifier_sha256"] == digest(
+        {k: v for k, v in manifest["task_files"].items() if k.startswith("tests/")}
+    )
+    assert "tests/docker-compose.yaml" in manifest["task_files"]
     assert not (task / "solution").exists()
     assert (task / "tests/check.py").read_bytes() == (TEMPLATE / "tests/check.py").read_bytes()
     result = {"artifact_sha256": bundle["artifact_sha256"], "security_verdict": "not_evaluated"}

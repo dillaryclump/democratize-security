@@ -103,3 +103,38 @@ branches only. Next: reviewed task compose overrides (no network, non-root,
 dropped capabilities, PID/swap/read-only limits) proven by rerunning the audit,
 and a verifier-only evidence nonce; then three application tasks. No model
 calls, spending or hostile-candidate execution are authorized by this audit.
+
+## Harbor container hardening and nonce-bound evidence (2026-10-14)
+
+Closed most of the gaps the boundary audit recorded. Reviewed compose files in
+the task harden both containers: `network_mode: none`, non-root users (agent
+`10001:10001`, verifier `postgres`), all capabilities dropped (the verifier keeps
+`CHOWN`, `DAC_OVERRIDE` and `FOWNER` for Harbor's root housekeeping),
+`no-new-privileges`, `init`, PID limits, swap equal to memory and read-only
+roots with image volumes for the paths Harbor copies. Each run's verifier
+receives a fresh nonce through `harbor run --ve`, and evidence carries an HMAC
+the host verifies. The host also rejects any `reward.json`. Replay tasks carry
+the same compose files. Audit policy v2 makes the closed gaps required checks and
+verifies the nonce is in no container configuration. See HARBOR_AUDIT.md.
+
+The design came from a source map of pinned Harbor 0.24.0 plus live
+experiments:
+- Under `cap_drop: ALL`, root cannot empty a uid-1001-owned bind mount, so
+  planted files survive.
+- `docker cp` writes only into volumes on a read-only root.
+- Harbor ignores the exit codes of its root housekeeping.
+- A same-uid agent could lock the shared log directory, so the agent's uid
+  must differ from the controller's.
+
+Local evidence (Docker 29.8.2, cgroup v1, PostgreSQL 16):
+- Full suite: 167 passed, no skips. Core-only: 148 passed, 19 skipped. Ruff
+  passes.
+- Hardened controls and sealed replays: oracle 1 / nop 0. Bundle hashes are
+  unchanged (`6fb653ff…`, `34da710d…`).
+- Audit: 10/10 v2 checks. The forgery was observed, then discarded; the genuine
+  reward was 0.
+- The agent probe reports no default route. Gaps fell from 14 to 3: Harbor's
+  shared log mount (now non-grading) and storage limits.
+
+Live CI for this change is pending. Next: the three application tasks under this
+layout. No model calls, spending or hostile-candidate execution are authorized.

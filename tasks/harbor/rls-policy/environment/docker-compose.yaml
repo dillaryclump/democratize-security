@@ -1,0 +1,19 @@
+# Reviewed agent hardening, merged after Harbor 0.24.0's own overlays. Harbor
+# keeps main off its egress sidecar only when network_mode is a literal key here:
+# do not move it into `extends:` or use `!reset`/`!override` tags.
+services:
+  main:
+    network_mode: "none"
+    # A uid unlike common host users: an owner may chmod the shared verifier
+    # log directory without any capability.
+    user: "10001:10001"
+    # Reap exited processes; Harbor's PID 1 is `sleep infinity`.
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    # Harbor exports MEMORY and sets mem_limit from task.toml; no extra swap.
+    memswap_limit: ${MEMORY:?Harbor must export MEMORY}

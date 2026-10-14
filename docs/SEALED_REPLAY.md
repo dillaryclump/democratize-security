@@ -21,14 +21,17 @@ job runs the whole sequence, with a 30-minute job deadline.
 The first two grades are diagnostic. Their captured policy files are sealed by
 the existing bounded artifact module. Replay loads and validates those bundles
 before creating any task. Only the single `policy.json` file, at most 4096 bytes,
-is accepted. A fresh task copies trusted verifier/configuration files and puts
-only sealed policy bytes plus a fixed Dockerfile in the agent build context.
+is accepted. A fresh task copies trusted verifier/configuration files, including
+both reviewed compose files, so replays run with the same container hardening.
+It puts only sealed policy bytes plus a fixed Dockerfile in the agent build
+context.
 It never copies the original solution or consults the original candidate file.
 The replay agent is always nop; it cannot call a model or modify the submission.
 
 Harbor performs the fresh run with the separate verifier. Host acceptance requires
-complete expected checks and equality between the replayed artifact and the
-pre-verification seal, as well as the verifier's input hash. Mismatches prevent
+complete expected checks bound to that run's verifier nonce, and equality between
+the replayed artifact and the pre-verification seal, as well as the verifier's
+input hash. Mismatches prevent
 publication of accepted replay evidence. A record binds the original artifact,
 trusted verifier source hash, generated task manifest and accepted result using
 the existing evidence envelope. `security_verdict` remains `not_evaluated` because
@@ -50,8 +53,8 @@ No dedicated-host approval, protected tests, model budget, persistence/recovery,
 or application-task gate is implied. Outputs on hosted CI runners are ephemeral;
 checked summaries are printed to logs, with observed evidence recorded below.
 
-Next: close the gaps recorded by the [boundary audit](HARBOR_AUDIT.md), then
-integrate three real application tasks with independent HTTP/database checks. Preserve this
+Next: integrate three real application tasks under the hardened layout audited in
+[HARBOR_AUDIT.md](HARBOR_AUDIT.md), with independent HTTP/database checks. Preserve this
 small replay regression when expanding the runner.
 
 ## Validation

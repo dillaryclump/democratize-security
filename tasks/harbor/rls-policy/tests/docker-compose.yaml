@@ -1,0 +1,19 @@
+# Reviewed verifier hardening for Harbor 0.24.0's separate verifier, which uses
+# this directory as its environment. Keep network_mode a literal key (see the
+# agent's environment/docker-compose.yaml).
+services:
+  main:
+    network_mode: "none"
+    user: "postgres"
+    # Reap the daemonized postmaster's children; Harbor's PID 1 is `sleep infinity`.
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    # Only for Harbor's root housekeeping: emptying the shared verifier log
+    # directory and fixing host ownership must not fail silently.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    memswap_limit: ${MEMORY:?Harbor must export MEMORY}
