@@ -1,6 +1,6 @@
 # Current status and next handoff
 
-Updated: 2026-10-13. Stage: M0 concrete reference defaults; M1 identity and HTTP recovery slice.
+Updated: 2026-10-14. Current work: M2 Harbor integration prerequisite. M2 is not complete; see HARBOR.md and the latest evidence below.
 
 ## Implemented
 
@@ -17,7 +17,7 @@ Local Python 3.12: 36 tests pass, 9 PostgreSQL integration tests explicitly skip
 
 ## Not implemented / limitations
 
-No production identity provider, sealed-artifact provenance, protected holdout verifier, hostile-workload isolation, Harbor/GEPA adapter, durable run store, paid execution or benchmark result. The public verifier is fixed to the synthetic dataset and trusts the harness to supply the app's actual runtime DSN. Core commands remain dependency-free; reference dependencies are optional.
+No production identity provider, sealed-only verification replay, protected holdout verifier, hostile-workload isolation, production Harbor/GEPA adapter, durable run store, paid execution or benchmark result. The public verifier is fixed to the synthetic dataset and trusts the harness to supply the app's actual runtime DSN. Core commands remain dependency-free; reference dependencies are optional.
 
 ## Decisions and next work
 
@@ -44,3 +44,18 @@ Implemented a fixed-command Docker probe for reviewed synthetic sealed artifacts
 CI run [38573021390](https://github.com/dillaryclump/democratize-security/actions/runs/38573021390), code revision `626074628cef551810216096839958a52464aa4a`: all four jobs passed. PostgreSQL job: 81 passed, 7 Docker cases intentionally skipped. Dedicated Docker job: all 7 container cases passed (one unrelated optional verifier module skipped during collection). Python 3.12 and 3.13 core checks passed. Local verification: 69 passed, 19 infrastructure cases skipped; Ruff formatting/lint and package build passed.
 
 The initial live run exposed a stdout backpressure shutdown timeout. The fix disconnects the attach stream before signalling the workload. Stop-race handling now requires an observed stopped state; live nested-file tests cover a restrictive controller umask. This evidence applies to the reviewed offline probe, not full M2 or a general hostile-code sandbox. Next: pinned Harbor separate-verifier integration with actual tenant-isolation development tasks and a dedicated-host gate.
+
+## Harbor policy spike (2026-10-14)
+
+Pinned Harbor 0.24.0 in a separate dependency group. Added a public declarative
+RLS policy task, separate PostgreSQL verifier image, oracle/nop controls, strict
+result/coverage checks and post-run artifact hash matching/sealing. See HARBOR.md
+for exact boundaries and reproduction. Local: 81 passed, 19 infrastructure tests
+skipped; pinned task schema loads. CI run
+[38577845657](https://github.com/dillaryclump/democratize-security/actions/runs/38577845657)
+at `df8eefcb4f1f6b0f157ca44553f41db0c49a6621` passed all five jobs. PostgreSQL:
+93 passed, 7 Docker cases skipped; worker job: all 7 container cases passed.
+Harbor: oracle 1 / nop 0, one trial each, zero exceptions, all four checks
+respectively true / false, separate mode and input hashes accepted. This one policy fixture is
+not one of the three M2 application development tasks. Next: sealed-only replay,
+image provenance and actual application tasks; no model execution authorized.
