@@ -35,3 +35,33 @@ def test_tampered_bundle_never_dispatched(tmp_path, monkeypatch):
     monkeypatch.setattr("democratize_security.worker_probe._docker", forbidden)
     with pytest.raises(ValueError):
         run_probe(bundle, "sha256:" + "a" * 64)
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_limit_stop_race_requires_observed_stopped_state(monkeypatch, running):
+    import json
+    import subprocess
+    import sys
+
+    from democratize_security.worker_probe import WorkerError, _capture
+
+    real_popen = subprocess.Popen
+
+    def synthetic_process(*args, **kwargs):
+        return real_popen([sys.executable, "-c", "print('x' * 4096)"], **kwargs)
+
+    def docker(*args):
+        if args[0] == "kill":
+            raise WorkerError("synthetic stop race")
+        assert args[0] == "inspect"
+        return json.dumps([{"State": {"Running": running}}])
+
+    monkeypatch.setattr("democratize_security.worker_probe.subprocess.Popen", synthetic_process)
+    monkeypatch.setattr("democratize_security.worker_probe._docker", docker)
+    if running:
+        with pytest.raises(WorkerError, match="could not be stopped"):
+            _capture("fixture", 5, 1024)
+    else:
+        reason, output = _capture("fixture", 5, 1024)
+        assert reason == "output_limit"
+        assert len(output) == 1024

@@ -104,3 +104,20 @@ def test_resource_stop_and_cleanup(tmp_path, image_id, source, reason):
     result = execute(tmp_path, image_id, source, timeout_seconds=2, output_limit=1024)
     assert result["termination"] == reason
     assert len(base64.b64decode(result["output_base64"])) <= 1024
+
+
+def test_nested_files_with_restrictive_controller_umask(tmp_path, image_id):
+    (tmp_path / "main.py").write_text(
+        "from pathlib import Path\nprint(Path('/candidate/data/nested/value.txt').read_text())"
+    )
+    nested = tmp_path / "data" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "value.txt").write_text("nested-fixture")
+    bundle = seal(tmp_path, ["main.py", "data/nested/value.txt"])
+    previous = os.umask(0o077)
+    try:
+        result = run_probe(bundle, image_id)
+    finally:
+        os.umask(previous)
+    assert result["exit_code"] == 0, result
+    assert base64.b64decode(result["output_base64"]) == b"nested-fixture\n"

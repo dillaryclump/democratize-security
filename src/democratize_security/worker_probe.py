@@ -65,7 +65,20 @@ def _capture(name: str, timeout: float, limit: int) -> tuple[str, bytes]:
                 except subprocess.TimeoutExpired:
                     reason = "timeout"
         if reason != "exited":
-            _docker("kill", name)
+            # Disconnect the full attach pipe before asking the daemon to kill
+            # the workload. Otherwise stdout backpressure can stall shutdown.
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            process.stdout.close()
+            try:
+                _docker("kill", name)
+            except (WorkerError, subprocess.TimeoutExpired):
+                # A finite program may exit between observing the limit and
+                # signalling it. Only an observed stopped state is acceptable.
+                state = json.loads(_docker("inspect", name))[0]["State"]
+                if state["Running"]:
+                    raise WorkerError("Worker could not be stopped") from None
         return reason, bytes(output[:limit])
     finally:
         if process.poll() is None:
@@ -103,6 +116,9 @@ def run_probe(
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(base64.b64decode(entry["content_base64"], validate=True))
             target.chmod(0o444)
+        for directory in root.rglob("*"):
+            if directory.is_dir():
+                directory.chmod(0o755)
         # A new controller-owned directory plus previously validated paths
         # avoids materializing into a candidate-owned directory tree.
         created = False
