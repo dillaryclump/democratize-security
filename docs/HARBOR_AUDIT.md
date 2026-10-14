@@ -121,7 +121,7 @@ accepted even if Harbor's directory cleanup failed.
 | Agent network probe | TCP handshake to Harbor's local proxy; external DNS resolved; ICMP echo answered | No default route |
 | Agent / verifier user | root / root, default capabilities | `10001:10001` with no capabilities / `postgres` with three |
 | Forgery | Observed, then discarded by Harbor | Observed, discarded, and cryptographically unacceptable |
-| CI (GitHub runner, cgroup v2) | 7/7 with the same gaps and DNS/ICMP open: [run 38598202622](https://github.com/dillaryclump/democratize-security/actions/runs/38598202622) at `a655e35` | Pending this change's CI |
+| CI (GitHub runner uid 1001, cgroup v2) | 7/7 with the same gaps and DNS/ICMP open: [run 38598202622](https://github.com/dillaryclump/democratize-security/actions/runs/38598202622) at `a655e35` | 10/10 with the same 3 gaps, no default route, forgery discarded, genuine reward 0: [run 38640538700](https://github.com/dillaryclump/democratize-security/actions/runs/38640538700) at `cd5c433` |
 
 The network probe row is the reviewed control's self-reported diagnostic, not
 listener-verified. For v2 it is corroborated by the daemon-observed

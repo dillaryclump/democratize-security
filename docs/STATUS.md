@@ -144,5 +144,12 @@ now executable before upload; the failure and the fix were reproduced with
 uid-1001-owned copies. The review also found that a task.toml exec user would
 override the audited container user; the audit now fails if one is set.
 
-Live CI for this change is pending. Next: the three application tasks under this
-layout. No model calls, spending or hostile-candidate execution are authorized.
+CI [run 38640538700](https://github.com/dillaryclump/democratize-security/actions/runs/38640538700)
+at `cd5c433` passed all five jobs on a GitHub runner (uid 1001, cgroup v2).
+- Hardened oracle 1 / nop 0 and both sealed replays were accepted with
+  nonce-bound evidence.
+- The audit passed 10/10 v2 checks with the same 3 gaps.
+- The forgery was observed and discarded, the genuine reward was 0, and the
+  agent probe reported no default route.
+
+Next: the three application tasks under this layout. No model calls, spending or hostile-candidate execution are authorized.
