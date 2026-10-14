@@ -9,7 +9,7 @@ Build affordable, inspectable security integration for AI-assisted software deve
 - New contributor or AI agent: [AGENTS.md](AGENTS.md), then [project brief](docs/PROJECT.md).
 - System design: [architecture](docs/ARCHITECTURE.md) and [trust model](docs/THREAT_MODEL.md).
 - What to build next: [status](docs/STATUS.md) and [milestone roadmap](docs/ROADMAP.md).
-- Harbor integration: [separate-verifier policy spike](docs/HARBOR.md).
+- Harbor integration: [separate-verifier policy spike](docs/HARBOR.md) and [observed boundary audit](docs/HARBOR_AUDIT.md).
 - Worker infrastructure spike: [offline container probe](docs/WORKER_PROBE.md).
 - Candidate handoff: [artifact boundary](docs/ARTIFACTS.md).
 - Research integrity: [experiment protocol](docs/RESEARCH_PROTOCOL.md) and [contracts](docs/CONTRACTS.md).

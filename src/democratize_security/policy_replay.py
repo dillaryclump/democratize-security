@@ -21,7 +21,13 @@ TRUSTED_FILES = (
     "tests/test.sh",
     "tests/check.py",
 )
-REPLAY_DOCKERFILE = """FROM python:3.12-slim-bookworm
+# Same reviewed multi-arch index digest as the task's agent image. A tag alone
+# can be repointed between runs; apt packages in the verifier image still can.
+AGENT_BASE_IMAGE = (
+    "python:3.12-slim-bookworm@sha256:"
+    "34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258"
+)
+REPLAY_DOCKERFILE = f"""FROM {AGENT_BASE_IMAGE}
 WORKDIR /candidate
 COPY policy.json /candidate/policy.json
 RUN chmod 444 /candidate/policy.json

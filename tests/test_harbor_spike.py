@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import runpy
 from pathlib import Path
 
@@ -93,3 +94,15 @@ def test_replay_rejects_valid_result_for_different_sealed_input(tmp_path):
     with pytest.raises(ValueError, match="pre-verification seal"):
         SPIKE["accept_result"](tmp_path, "oracle", 1, expected_bundle=seal(source, ["policy.json"]))
     assert not (tmp_path / "policy.bundle.json").exists()
+
+
+def test_harbor_base_images_are_digest_pinned():
+    from democratize_security.policy_replay import REPLAY_DOCKERFILE
+
+    sources = [path.read_text() for path in (ROOT / "tasks/harbor").rglob("Dockerfile")]
+    for text in [*sources, REPLAY_DOCKERFILE]:
+        # Docker ignores case and leading whitespace; flags or stage references
+        # in place of a pinned image fail closed.
+        bases = re.findall(r"^\s*from\s+(\S+)", text, re.IGNORECASE | re.MULTILINE)
+        assert bases
+        assert all(re.fullmatch(r"[a-z0-9./:_-]+@sha256:[0-9a-f]{64}", base) for base in bases)
