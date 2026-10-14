@@ -81,3 +81,15 @@ def test_reject_policy_symlink(tmp_path):
     (tmp_path / "policy.json").symlink_to(tmp_path / "target")
     with pytest.raises(OSError):
         VERIFIER["read_policy"](tmp_path / "policy.json")
+
+
+def test_replay_rejects_valid_result_for_different_sealed_input(tmp_path):
+    from democratize_security.artifacts import seal
+
+    trial, _, _ = fixture(tmp_path)
+    source = tmp_path / "sealed-source"
+    source.mkdir()
+    (source / "policy.json").write_text('{"enabled":false,"predicate":"all"}')
+    with pytest.raises(ValueError, match="pre-verification seal"):
+        SPIKE["accept_result"](tmp_path, "oracle", 1, expected_bundle=seal(source, ["policy.json"]))
+    assert not (tmp_path / "policy.bundle.json").exists()

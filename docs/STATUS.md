@@ -59,3 +59,12 @@ Harbor: oracle 1 / nop 0, one trial each, zero exceptions, all four checks
 respectively true / false, separate mode and input hashes accepted. This one policy fixture is
 not one of the three M2 application development tasks. Next: sealed-only replay,
 image provenance and actual application tasks; no model execution authorized.
+
+## Sealed policy replay (2026-10-14)
+
+Added pre-verification bundle validation and fresh Harbor nop tasks constructed
+from sealed policy bytes, with input/output equality required before publishing
+bound replay evidence. See SEALED_REPLAY.md. Initial grades are diagnostic only.
+Local: 82 passed, 20 skipped; Ruff and generated-task schema load pass. Live CI
+pending. Next: runtime image provenance/worker audit and three application tasks.
+This advances M2 prerequisites without completing M2 or authorizing model calls.

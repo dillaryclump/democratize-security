@@ -48,14 +48,16 @@ access for images and apt; runtime network policy is a separate setting.
 This is a reviewed-data smoke test, **not approval for hostile candidates**.
 Harbor's artifact collection and conventional `/logs/artifacts` transfer are not
 our hardened allowlist boundary. Host sealing happens after Harbor verification;
-it checks matching input bytes but does not enforce sealed-only replay. Image tags
+the original spike alone does not enforce sealed-only replay. The follow-up
+[sealed policy replay](SEALED_REPLAY.md) now verifies fresh tasks constructed from
+those pre-existing bundles. Image tags
 and apt packages are mutable, even though Harbor/Python dependencies are locked.
 Storage configuration is a request, not evidence of Docker disk enforcement.
 The spike has no recovery controller, adversarial containment proof, private tests,
 production identity, or independent application HTTP assessment. A killed host
 process may require container cleanup; use disposable runners.
 
-Next: implement pre-verification sealing/replay, pin and record image digests,
+Next: retain the sealed policy replay regression, pin and record image digests,
 audit actual mounts/resource/network enforcement, then adapt read/list/export
 application tasks using the independent HTTP/database verifier. Establish the
 three-task fresh-replay gate and dedicated-host policy before model execution.

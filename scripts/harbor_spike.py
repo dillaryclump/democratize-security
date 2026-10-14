@@ -4,14 +4,16 @@ import json
 import subprocess
 from pathlib import Path
 
-from democratize_security.artifacts import seal, write_new
+from democratize_security.artifacts import seal, validate, write_new
 
 ROOT = Path(__file__).resolve().parents[1]
 TASK = ROOT / "tasks/harbor/rls-policy"
 CHECKS = {"authorized_a", "authorized_b", "missing_context_denied", "rls_enabled"}
 
 
-def accept_result(job, agent, expected):
+def accept_result(job, agent, expected, *, expected_bundle=None):
+    if expected_bundle is not None:
+        validate(expected_bundle)
     results = list(job.glob("*/result.json"))
     if len(results) != 1:
         raise ValueError("expected exactly one trial result")
@@ -34,6 +36,9 @@ def accept_result(job, agent, expected):
     bundle = seal(trial / "artifacts", ["policy.json"])
     if bundle["files"][0]["sha256"] != evidence.get("artifact_sha256"):
         raise ValueError("collected policy differs from verifier input")
+    if expected_bundle is not None:
+        if bundle["artifact_sha256"] != expected_bundle["artifact_sha256"]:
+            raise ValueError("Replay differs from the pre-verification seal")
     write_new(bundle, job / "policy.bundle.json")
     return {
         "agent": agent,
