@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from democratize_security.harbor_audit import (
+from democratize_security.adapters.runners.harbor_audit import (
     REQUIRED,
     SIDECAR,
     audit,
@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TRIAL = "rls-policy__AbC123"
 LIMITS = {"agent": {"cpus": 1, "memory_mb": 256}, "verifier": {"cpus": 1, "memory_mb": 512}}
 EGRESS = {"control_connections": 1, "trial_connections": 0}
+PROJECT = "com.docker.compose.project"
 
 
 def container(cid, project, service, *, image, memory=0, network="bridge", binds=(), cap_add=None):
@@ -56,6 +57,12 @@ def container(cid, project, service, *, image, memory=0, network="bridge", binds
             for target, source in binds
         ],
     }
+
+
+def event(action, cid, project, service, moment):
+    # Docker events carry container labels as actor attributes.
+    labels = {"com.docker.compose.project": project, "com.docker.compose.service": service}
+    return {"Action": action, "Actor": {"ID": cid, "Attributes": labels}, "timeNano": moment}
 
 
 @pytest.fixture
@@ -97,10 +104,12 @@ def observed(tmp_path):
         {"Type": "volume", "Name": "c" * 64, "Destination": "/var/lib/postgresql/data", "RW": True}
     )
     events = [
-        {"Action": "start", "Actor": {"ID": "agent"}, "timeNano": 1},
-        {"Action": "die", "Actor": {"ID": "agent"}, "timeNano": 2},
-        {"Action": "start", "Actor": {"ID": "verifier"}, "timeNano": 3},
-        {"Action": "die", "Actor": {"ID": "verifier"}, "timeNano": 4},
+        event("start", "as", agent_project, SIDECAR, 0),
+        event("start", "agent", agent_project, "main", 1),
+        event("die", "agent", agent_project, "main", 2),
+        event("start", "vs", verifier_project, SIDECAR, 3),
+        event("start", "verifier", verifier_project, "main", 4),
+        event("die", "verifier", verifier_project, "main", 5),
     ]
     containers = {"agent": agent, "agent_sidecar": agent_sidecar}
     containers |= {"verifier": verifier, "verifier_sidecar": verifier_sidecar}
@@ -155,6 +164,8 @@ def test_observed_harbor_shape_passes_and_records_gaps(observed, tmp_path):
         ("public_network", "network_isolation"),
         ("foreign_namespace", "network_isolation"),
         ("overlap", "agent_stopped_before_verifier"),
+        ("restart_during_verification", "agent_stopped_before_verifier"),
+        ("restart_and_die_during_verification", "agent_stopped_before_verifier"),
         ("extra_service", "separate_environments"),
         ("duplicate_main", "separate_environments"),
         ("shared_image", "separate_environments"),
@@ -203,7 +214,12 @@ def test_boundary_violation_fails(observed, mutation, check):
     elif mutation == "foreign_namespace":
         agent["HostConfig"]["NetworkMode"] = "container:vs"
     elif mutation == "overlap":
-        events[1]["timeNano"] = 5
+        events[2]["timeNano"] = 6
+    elif mutation == "restart_during_verification":
+        events.append(event("start", "agent", agent["Config"]["Labels"][PROJECT], "main", 6))
+    elif mutation == "restart_and_die_during_verification":
+        events.append(event("start", "agent", agent["Config"]["Labels"][PROJECT], "main", 6))
+        events.append(event("die", "agent", agent["Config"]["Labels"][PROJECT], "main", 7))
     elif mutation == "extra_service":
         containers["candidate_service"] = copy.deepcopy(containers["agent_sidecar"])
         containers["candidate_service"]["Config"]["Labels"]["com.docker.compose.service"] = "db"
@@ -218,7 +234,9 @@ def test_boundary_violation_fails(observed, mutation, check):
     assert outcomes(record)[check] == "fail", record
 
 
-@pytest.mark.parametrize("missing", ["verifier", "events", "positive_control"])
+@pytest.mark.parametrize(
+    "missing", ["verifier", "events", "positive_control", "uninspected_service"]
+)
 def test_missing_observation_is_incomplete(observed, missing):
     trial, containers, events = copy.deepcopy(observed)
     egress = EGRESS
@@ -226,6 +244,10 @@ def test_missing_observation_is_incomplete(observed, missing):
         del containers["verifier"]
     elif missing == "events":
         events = []
+    elif missing == "uninspected_service":
+        # A started extra service whose inspection failed must not be invisible.
+        project = containers["agent"]["Config"]["Labels"][PROJECT]
+        events.append(event("start", "ghost", project, "db", 1))
     else:
         egress = {"control_connections": 0, "trial_connections": 0}
     record = run(trial, containers, events, egress)

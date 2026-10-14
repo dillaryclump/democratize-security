@@ -22,7 +22,8 @@ random TCP port on all host interfaces to count connections. The CI
 All gating inputs come from the controller, never from the candidate:
 
 - `docker events` for container start/die, with each container inspected as it
-  starts. `harbor_audit.py` (stdlib only, no Harbor import) evaluates them.
+  starts. `adapters/runners/harbor_audit.py` (stdlib only, no Harbor import)
+  evaluates them; the core package does not import runner adapters.
 - A host TCP listener. A probe container on a fresh user-defined bridge must
   reach it first; otherwise a zero count during the trial proves nothing and the
   audit is incomplete.
@@ -43,8 +44,8 @@ control and zero trial connections; and these required audit checks pass:
 
 | Check | Requirement |
 | --- | --- |
-| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides, different images |
-| `agent_stopped_before_verifier` | Agent `die` event precedes verifier `start` event |
+| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides, different images; every started trial container was inspected |
+| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before the verifier's first `start` |
 | `no_privilege` | Not privileged; no added capabilities except the sidecar's `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
 | `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes |
 | `declared_limits` | Memory and CPU equal `task.toml` |

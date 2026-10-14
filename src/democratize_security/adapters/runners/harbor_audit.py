@@ -135,6 +135,17 @@ def audit(
 
     def separate():
         agent, verifier = main(agent_project), main(verifier_project)
+        # A container that started but was never inspected could be an extra
+        # service this check cannot see, so its absence is missing evidence.
+        started = {
+            e["Actor"]["ID"]
+            for e in events
+            if e.get("Action") == "start"
+            and e.get("Actor", {}).get("Attributes", {}).get("com.docker.compose.project")
+            in by_project
+        }
+        if started - {c["Id"] for c in inspections}:
+            raise Unavailable("A trial container started without an observed inspection")
         for project in by_project:
             services = [_labels(c)[1] for c in by_project[project]]
             if sorted(set(services)) != sorted(services) or not set(services) <= {
@@ -148,7 +159,7 @@ def audit(
     def ordering():
         agent, verifier = main(agent_project), main(verifier_project)
 
-        def moment(container: dict, action: str) -> int:
+        def moments(container: dict, action: str) -> list[int]:
             times = [
                 int(e["timeNano"])
                 for e in events
@@ -156,9 +167,15 @@ def audit(
             ]
             if not times:
                 raise Unavailable(f"No observed {action} event")
-            return min(times) if action == "start" else max(times)
+            return times
 
-        if not moment(agent, "die") < moment(verifier, "start"):
+        # Every agent start, including any restart, must end in a die before
+        # the verifier first starts.
+        if not (
+            max(moments(agent, "start"))
+            < max(moments(agent, "die"))
+            < min(moments(verifier, "start"))
+        ):
             raise AssertionError("Agent container was running when verification started")
 
     def privilege():

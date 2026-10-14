@@ -17,8 +17,8 @@ import time
 
 import harbor_spike
 
+from democratize_security.adapters.runners.harbor_audit import audit, declared_limits
 from democratize_security.artifacts import seal
-from democratize_security.harbor_audit import audit, declared_limits
 from democratize_security.policy_replay import AGENT_BASE_IMAGE, write_record
 
 OUTPUT = harbor_spike.ROOT / ".research/harbor-audit"

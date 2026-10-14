@@ -100,7 +100,9 @@ def test_harbor_base_images_are_digest_pinned():
     from democratize_security.policy_replay import REPLAY_DOCKERFILE
 
     sources = [path.read_text() for path in (ROOT / "tasks/harbor").rglob("Dockerfile")]
-    lines = [line for text in [*sources, REPLAY_DOCKERFILE] for line in text.splitlines()]
-    bases = [line for line in lines if line.upper().startswith("FROM ")]
-    assert len(bases) == len(sources) + 1
-    assert all(re.fullmatch(r"FROM [a-z0-9./:_-]+@sha256:[0-9a-f]{64}", base) for base in bases)
+    for text in [*sources, REPLAY_DOCKERFILE]:
+        # Docker ignores case and leading whitespace; flags or stage references
+        # in place of a pinned image fail closed.
+        bases = re.findall(r"^\s*from\s+(\S+)", text, re.IGNORECASE | re.MULTILINE)
+        assert bases
+        assert all(re.fullmatch(r"[a-z0-9./:_-]+@sha256:[0-9a-f]{64}", base) for base in bases)
