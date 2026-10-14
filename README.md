@@ -2,7 +2,7 @@
 
 Build affordable, inspectable security integration for AI-assisted software development, with reproducible evidence of what it protects.
 
-**Status: foundation, not a security product yet.** Implemented today: a Python package, strict campaign validation, deterministic offline trial planning, tests, CI configuration and a portable development environment. Tenant enforcement, protected verification, agent execution and automated search are planned. No benchmark improvement or security guarantee is claimed.
+**Status: development reference and offline research foundation.** Implemented: campaign planning, a synthetic FastAPI invoice app, PostgreSQL RLS integration tests and a public HTTP/database verifier. These are development fixtures, not production authentication or a protected research worker. No benchmark improvement or universal security guarantee is claimed.
 
 ## Start here
 
@@ -28,6 +28,10 @@ uv run --locked ruff format --check .
 The example contains illustrative task hashes and a model placeholder. It plans 12 development trials without executing any of them, accessing a model, or spending money. Validation checks structure and consistency; it does not prove those tasks or revisions exist. A real campaign must resolve and verify them before execution. The budget is deliberately zero.
 
 For browser-based development, open this repository in GitHub Codespaces. Its dev container installs the locked development environment. Codespaces may incur compute/storage charges under your account; no Codespace or paid model job is created by this repository setup.
+
+## Run the reference verification
+
+See [reference guide](docs/REFERENCE.md) for the concrete access contract and reproducible PostgreSQL test command. Install optional dependencies with `uv sync --locked --extra reference`. The CI `postgres-reference` job runs the full suite against real PostgreSQL 17, including deliberately unsafe variants. Without a configured disposable database, local integration tests explicitly skip.
 
 ## Initial product and long-term direction
 

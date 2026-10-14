@@ -13,8 +13,6 @@ The dev-container image has a Python 3.12 version tag; it is development conveni
 ```bash
 git clone https://github.com/dillaryclump/democratize-security.git
 cd democratize-security
-# Switch to foundation/project-setup until its PR is merged.
-git switch foundation/project-setup
 uv sync --locked
 uv run --locked research validate campaigns/development.example.json
 ```
@@ -23,7 +21,7 @@ Python 3.12 is the default; CI also checks 3.13. `uv sync --locked` verifies the
 
 ## Routine workflow
 
-Start from current main after foundation merge. Create a small task branch, give the agent an issue plus `AGENTS.md`, and require a PR with observed tests. For simultaneous coding sessions, use separate branches/worktrees so tools cannot overwrite one another. Avoid sharing a mutable working directory between agents.
+Start from current main. Create a small task branch, give the agent an issue plus `AGENTS.md`, and require a PR with observed tests. For simultaneous coding sessions, use separate branches/worktrees so tools cannot overwrite one another. Avoid sharing a mutable working directory between agents.
 
 ```bash
 uv run --locked pytest
@@ -55,3 +53,7 @@ Repository configuration files cannot enable these settings by themselves. The f
 ## First agent assignment
 
 "Read AGENTS.md and the required docs. Work on M1 only after M0 assumptions are resolved. Implement a synthetic two-tenant reference invoice app and explicit vulnerable variants, plus an independent verifier against real PostgreSQL. Preserve useful reads, lists/search and CSV. Demonstrate positive and negative outcomes, including incomplete-verification rejection. Do not add paid model calls or GEPA. Submit a small reviewable PR and update STATUS.md."
+
+## Reference integration gate
+
+Follow [REFERENCE.md](REFERENCE.md) for optional dependencies and PostgreSQL. Add `postgres-reference` to required branch checks alongside the Python matrix. The plain core suite may skip optional checks; only the dedicated job proves PostgreSQL tests ran.

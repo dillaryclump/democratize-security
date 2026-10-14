@@ -13,6 +13,14 @@ dependencies = []
 [project.scripts]
 research = "democratize_security.cli:main"
 
+[project.optional-dependencies]
+reference = [
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "psycopg[binary,pool]>=3.3.6",
+    "uvicorn>=0.54.0",
+]
+
 [dependency-groups]
 dev = ["pytest==8.3.5", "ruff==0.11.13"]
 
@@ -21,6 +29,7 @@ packages = ["src/democratize_security"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: requires a disposable real PostgreSQL server"]
 
 [tool.ruff]
 target-version = "py312"
