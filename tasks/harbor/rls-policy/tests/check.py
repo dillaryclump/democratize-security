@@ -1,11 +1,29 @@
 """Public fixed-fixture verifier. Interpret data only; never execute candidate code."""
 
 import hashlib
+import hmac
 import json
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
+
+# Supplied only to this verifier's exec by the controller (`harbor run --ve`).
+NONCE = "DS_NONCE"
+GRADES = ("reward.json", "reward.txt", "policy-evidence.json")
+
+
+def evidence_mac(nonce, payload):
+    """Bind evidence to this run; the agent never sees the nonce."""
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hmac.new(nonce.encode(), data, hashlib.sha256).hexdigest()
+
+
+def write_new(path, text):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(text)
 
 
 def unique_object(pairs):
@@ -92,19 +110,30 @@ def evaluate(policy):
     }
 
 
-def main():
-    output = Path("/logs/verifier")
-    output.mkdir(parents=True, exist_ok=True)
+def main(output=Path("/logs/verifier"), candidate="/candidate/policy.json", environ=os.environ):
+    # The agent could write this shared directory. Never grade on top of a
+    # planted file; unlinking removes a planted link without following it.
+    for name in GRADES:
+        try:
+            os.unlink(output / name)
+        except FileNotFoundError:
+            pass
+    nonce = environ.get(NONCE, "")
+    if not re.fullmatch(r"[0-9a-f]{64}", nonce):
+        # Infrastructure failure: no reward is emitted.
+        raise SystemExit("verifier nonce missing")
     try:
-        policy, digest = read_policy("/candidate/policy.json")
+        policy, digest = read_policy(candidate)
     except (OSError, ValueError, UnicodeError):
         checks, digest = {"valid_submission": False}, None
     else:
         # Infrastructure failures propagate: no reward is emitted.
         checks = evaluate(policy)
-    evidence = {"schema_version": 1, "artifact_sha256": digest, "checks": checks}
-    (output / "policy-evidence.json").write_text(json.dumps(evidence, sort_keys=True))
-    (output / "reward.txt").write_text("1" if all(checks.values()) else "0")
+    reward = 1 if all(checks.values()) else 0
+    payload = {"schema_version": 2, "artifact_sha256": digest, "checks": checks, "reward": reward}
+    evidence = {**payload, "mac": evidence_mac(nonce, payload)}
+    write_new(output / "policy-evidence.json", json.dumps(evidence, sort_keys=True))
+    write_new(output / "reward.txt", str(reward))
 
 
 if __name__ == "__main__":

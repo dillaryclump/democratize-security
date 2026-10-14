@@ -1,6 +1,11 @@
 """Run exactly two reviewed, model-free Harbor infrastructure controls."""
 
+import base64
+import hashlib
+import hmac
 import json
+import os
+import secrets
 import subprocess
 from pathlib import Path
 
@@ -9,9 +14,36 @@ from democratize_security.artifacts import seal, validate, write_new
 ROOT = Path(__file__).resolve().parents[1]
 TASK = ROOT / "tasks/harbor/rls-policy"
 CHECKS = {"authorized_a", "authorized_b", "missing_context_denied", "rls_enabled"}
+# Must not match Harbor's secret-name pattern, or Harbor redacts it in evidence.
+NONCE = "DS_NONCE"
 
 
-def accept_result(job, agent, expected, *, expected_bundle=None):
+def evidence_mac(nonce, evidence):
+    # Mirrors the verifier's check.py, which cannot import project code.
+    payload = {k: evidence[k] for k in ("artifact_sha256", "checks", "reward", "schema_version")}
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hmac.new(nonce.encode(), data, hashlib.sha256).hexdigest()
+
+
+def run_trial(task, agent, jobs_dir, job_name):
+    """Run one finite, retry-free trial; return the nonce only its verifier saw."""
+    nonce = secrets.token_hex(32)
+    subprocess.run(
+        ["harbor", "run", "-p", str(task), "-a", agent, "-n", "1", "-k", "1", "-r", "0"]
+        + ["--jobs-dir", str(jobs_dir), "--job-name", job_name]
+        # Harbor resolves the template from its own environment at verify time
+        # and passes it only to the separate verifier's test exec, so the raw
+        # value is never persisted in job configuration or shown to the agent.
+        + ["--ve", f"{NONCE}=${{{NONCE}}}"],
+        check=True,
+        timeout=600,
+        cwd=ROOT,
+        env={**os.environ, NONCE: nonce},
+    )
+    return nonce
+
+
+def accept_result(job, agent, expected, nonce, *, expected_bundle=None):
     if expected_bundle is not None:
         validate(expected_bundle)
     results = list(job.glob("*/result.json"))
@@ -27,7 +59,22 @@ def accept_result(job, agent, expected, *, expected_bundle=None):
         or result.get("verifier_result", {}).get("rewards") != {"reward": expected}
     ):
         raise ValueError("missing, failed, or unexpected Harbor result")
-    evidence = json.loads((trial / "verifier/policy-evidence.json").read_text())
+    # Harbor grades from reward.json before reward.txt; this verifier never
+    # writes one, so any reward.json is foreign.
+    if os.path.lexists(trial / "verifier/reward.json"):
+        raise ValueError("unexpected reward.json in verifier output")
+    sealed = seal(trial / "verifier", ["policy-evidence.json"])["files"][0]["content_base64"]
+    evidence = json.loads(base64.b64decode(sealed))
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != {"artifact_sha256", "checks", "reward", "schema_version", "mac"}
+        or evidence["schema_version"] != 2
+        or not isinstance(evidence["mac"], str)
+        or not hmac.compare_digest(evidence["mac"], evidence_mac(nonce, evidence))
+    ):
+        raise ValueError("evidence is not bound to this run's verifier nonce")
+    if evidence["reward"] != expected:
+        raise ValueError("evidence reward disagrees with Harbor")
     checks = evidence.get("checks", {})
     if set(checks) != CHECKS or any(type(value) is not bool for value in checks.values()):
         raise ValueError("incomplete verifier coverage")
@@ -65,30 +112,8 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     summaries = []
     for agent, reward in (("oracle", 1), ("nop", 0)):
-        subprocess.run(
-            [
-                "harbor",
-                "run",
-                "-p",
-                str(TASK),
-                "-a",
-                agent,
-                "-n",
-                "1",
-                "-k",
-                "1",
-                "-r",
-                "0",
-                "--jobs-dir",
-                str(output),
-                "--job-name",
-                agent,
-            ],
-            check=True,
-            timeout=600,
-            cwd=ROOT,
-        )
-        summaries.append(accept_result(output / agent, agent, reward))
+        nonce = run_trial(TASK, agent, output, agent)
+        summaries.append(accept_result(output / agent, agent, reward, nonce))
     (output / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
     print(json.dumps(summaries, indent=2))
 

@@ -6,13 +6,18 @@ self-reports are never inputs. Passing records what one daemon configured for on
 reviewed trial; it is not a container-escape proof or hostile-workload approval.
 """
 
+import json
 import re
 import tomllib
 from pathlib import Path
 
-POLICY = "harbor-docker-boundary-v1"
+POLICY = "harbor-docker-boundary-v2"
 SIDECAR = "harbor-docker-egress-control-sidecar"
 SIDECAR_CAPS = {"CAP_NET_ADMIN", "CAP_NET_RAW"}
+# The verifier keeps only what Harbor's root housekeeping (emptying the shared
+# verifier log directory, fixing host ownership) needs; the agent keeps none.
+ROLE_CAPS = {"agent": set(), "verifier": {"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"}}
+TMPFS = {"/tmp"}
 # Harbor-owned log binds, by container target, relative to the trial directory.
 AGENT_BINDS = {
     "/logs/agent": "agent",
@@ -28,6 +33,9 @@ REQUIRED = (
     "declared_limits",
     "network_isolation",
     "no_observed_egress",
+    "least_privilege",
+    "bounded_resources",
+    "verifier_secret_withheld",
 )
 
 
@@ -52,6 +60,31 @@ def declared_limits(task_toml: Path) -> dict:
             ("verifier", config["verifier"]["environment"]),
         )
     }
+
+
+def declared_exec_users(task_toml: Path) -> list[tuple[str, object]]:
+    """task.toml users Harbor would pass as `exec -u`, overriding the audited
+    container user. The hardened layout requires none."""
+    config = tomllib.loads(task_toml.read_text())
+    sections = [config] + config.get("steps", [])
+    return [
+        (role, section[role]["user"])
+        for section in sections
+        for role in ("agent", "verifier")
+        if "user" in section.get(role, {})
+    ]
+
+
+def _is_root(user: str) -> bool:
+    # Docker resolves numeric strings (including "00" or "+0") as uids.
+    name = user.split(":")[0].strip()
+    return name in {"", "root"} or bool(re.fullmatch(r"[+-]?\d+", name) and int(name) == 0)
+
+
+def _last_flag(values, flags: set[str]) -> str | None:
+    # Docker applies repeated security and mount options in order; the last wins.
+    matches = [value for value in values if value.split("=")[0].split(":")[0] in flags]
+    return matches[-1] if matches else None
 
 
 def _labels(container: dict) -> tuple[str, str]:
@@ -110,8 +143,16 @@ def audit(
     events: list[dict],
     limits: dict,
     egress: dict,
+    secret: str,
+    host_uid: int,
+    exec_users: list,
 ) -> dict:
-    """Evaluate one trial's observed containers. Missing evidence is incomplete."""
+    """Evaluate one trial's observed containers. Missing evidence is incomplete.
+
+    `secret` is the verifier-only nonce; no container configuration may hold it.
+    `host_uid` owns the trial directories Harbor bind-mounts into both containers.
+    `exec_users` are task.toml users that would override the containers' own.
+    """
     agent_project = compose_project(f"{trial_name}__env")
     verifier_project = compose_project(f"{trial_name}__verifier__trial")
     roles = {agent_project: "agent", verifier_project: "verifier"}
@@ -128,10 +169,6 @@ def audit(
         if len(found) != 1:
             raise AssertionError(f"Expected one {roles[project]} main container")
         return found[0]
-
-    def sidecar_of(project: str) -> dict | None:
-        found = [c for c in by_project[project] if _labels(c)[1] == SIDECAR]
-        return found[0] if len(found) == 1 else None
 
     def separate():
         agent, verifier = main(agent_project), main(verifier_project)
@@ -182,10 +219,11 @@ def audit(
         for project in by_project:
             for container in by_project[project]:
                 host = container["HostConfig"]
-                allowed = SIDECAR_CAPS if _labels(container)[1] == SIDECAR else set()
+                # Main containers' capability sets are checked by least_privilege.
+                sidecar = _labels(container)[1] == SIDECAR
                 if (
                     host.get("Privileged")
-                    or not set(host.get("CapAdd") or []) <= allowed
+                    or (sidecar and not set(host.get("CapAdd") or []) <= SIDECAR_CAPS)
                     or any("unconfined" in o for o in host.get("SecurityOpt") or [])
                     or "host" in {host.get(k) for k in ("PidMode", "IpcMode", "UTSMode")}
                     or host.get("UsernsMode") == "host"
@@ -200,6 +238,12 @@ def audit(
         for project in by_project:
             for container in by_project[project]:
                 is_main = _labels(container)[1] == "main"
+                tmpfs = container["HostConfig"].get("Tmpfs") or {}
+                if not set(tmpfs) <= (TMPFS if is_main else set()) or any(
+                    _last_flag(options.split(","), {"exec", "noexec"}) != "noexec"
+                    for options in tmpfs.values()
+                ):
+                    raise AssertionError("Unexpected or executable tmpfs in trial container")
                 declared = set(container["Config"].get("Volumes") or {})
                 binds = {}
                 for mount in container.get("Mounts") or []:
@@ -224,11 +268,10 @@ def audit(
                 raise AssertionError(f"{role} limits differ from task configuration")
 
     def network():
+        # Harbor's sidecar namespace still allows DNS and ICMP; require none.
         for project, role in roles.items():
-            mode = main(project)["HostConfig"].get("NetworkMode")
-            sidecar = sidecar_of(project)
-            if mode != "none" and (sidecar is None or mode != f"container:{sidecar['Id']}"):
-                raise AssertionError(f"{role} main container has a network path")
+            if main(project)["HostConfig"].get("NetworkMode") != "none":
+                raise AssertionError(f"{role} main container has a network namespace")
 
     def egress_observed():
         if egress.get("control_connections", 0) < 1:
@@ -236,10 +279,70 @@ def audit(
         if egress.get("trial_connections") != 0:
             raise AssertionError("Host listener observed a connection during the trial")
 
+    def least_privilege():
+        if exec_users:
+            # Harbor would run agent or verifier commands as this user instead
+            # of the container user observed below.
+            raise AssertionError("task.toml overrides the audited container user")
+        for project, role in roles.items():
+            container = main(project)
+            host = container["HostConfig"]
+            user = container["Config"].get("User") or ""
+            if _is_root(user):
+                raise AssertionError(f"{role} main container runs as root")
+            # An owner may chmod a directory without capabilities, so an agent
+            # sharing the host uid could lock the verifier log directory.
+            if role == "agent" and (
+                not re.fullmatch(r"\d+:\d+", user) or int(user.split(":")[0]) == host_uid
+            ):
+                raise AssertionError("agent needs an explicit uid:gid other than the host's")
+            if (
+                "ALL" not in (host.get("CapDrop") or [])
+                or not set(host.get("CapAdd") or []) <= ROLE_CAPS[role]
+            ):
+                raise AssertionError(f"{role} capabilities exceed its allowance")
+            last = _last_flag(host.get("SecurityOpt") or [], {"no-new-privileges"})
+            if last not in {
+                "no-new-privileges",
+                "no-new-privileges:true",
+                "no-new-privileges=true",
+            }:
+                raise AssertionError(f"{role} may gain privileges")
+
+    def bounded():
+        for project, role in roles.items():
+            host = main(project)["HostConfig"]
+            if (
+                type(host.get("PidsLimit")) is not int
+                or host["PidsLimit"] <= 0
+                or host.get("MemorySwap") != host.get("Memory")
+                or host.get("ReadonlyRootfs") is not True
+            ):
+                raise AssertionError(f"{role} processes, swap or root filesystem unbounded")
+
+    def secret_withheld():
+        if not isinstance(secret, str) or not re.fullmatch(r"[0-9a-f]{64}", secret):
+            raise Unavailable("No verifier nonce supplied to the audit")
+        for project in by_project:
+            main(project)
+            if any(secret in json.dumps(c) for c in by_project[project]):
+                raise AssertionError(f"Verifier nonce present in {roles[project]} configuration")
+
     checks = []
     for name, callback in zip(
         REQUIRED,
-        (separate, ordering, privilege, mounts, resources, network, egress_observed),
+        (
+            separate,
+            ordering,
+            privilege,
+            mounts,
+            resources,
+            network,
+            egress_observed,
+            least_privilege,
+            bounded,
+            secret_withheld,
+        ),
         strict=True,
     ):
         try:
@@ -263,7 +366,7 @@ def audit(
                 continue
             if summary["network"] == "egress_sidecar_namespace":
                 gaps.add("network_via_net_admin_sidecar")
-            if summary["user"] in {"", "0", "root", "0:0", "root:root"}:
+            if _is_root(summary["user"]):
                 gaps.add(f"{role}_runs_as_root")
             if "ALL" not in summary["cap_drop"]:
                 gaps.add(f"{role}_default_capabilities")

@@ -1,7 +1,6 @@
 """Four finite model-free trials: two diagnostic controls, two sealed replays."""
 
 import json
-import subprocess
 
 import harbor_spike
 
@@ -20,31 +19,9 @@ def main():
         task = output / f"task-{control}"
         manifest = prepare_replay(bundle, harbor_spike.TASK, task)
         write_record(output / f"manifest-{control}.json", manifest)
-        subprocess.run(
-            [
-                "harbor",
-                "run",
-                "-p",
-                str(task),
-                "-a",
-                "nop",
-                "-n",
-                "1",
-                "-k",
-                "1",
-                "-r",
-                "0",
-                "--jobs-dir",
-                str(output),
-                "--job-name",
-                f"replay-{control}",
-            ],
-            check=True,
-            timeout=600,
-            cwd=harbor_spike.ROOT,
-        )
+        nonce = harbor_spike.run_trial(task, "nop", output, f"replay-{control}")
         result = harbor_spike.accept_result(
-            output / f"replay-{control}", "nop", expected, expected_bundle=bundle
+            output / f"replay-{control}", "nop", expected, nonce, expected_bundle=bundle
         )
         record = record_replay(bundle, manifest, result)
         write_record(output / f"evidence-{control}.json", record)

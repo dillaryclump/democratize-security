@@ -35,13 +35,19 @@ checkout for replay. CI job `harbor-spike` runs these controls on a hosted runne
 5. Host acceptance requires exactly one finished trial per control, no Harbor
    exception, separate mode, the expected reward and complete check evidence.
    It seals the collected file using the existing artifact module and checks
-   its SHA-256 against the verifier's input hash. Missing or mismatched evidence
-   fails the job. The summary deliberately uses `security_verdict: not_evaluated`:
+   its SHA-256 against the verifier's input hash. Evidence must carry an HMAC
+   under a fresh per-run nonce that only the separate verifier receives, and
+   any `reward.json` is rejected. Missing or mismatched evidence fails the job. The summary deliberately uses `security_verdict: not_evaluated`:
    it is infrastructure evidence, not an application security result.
 
 Task configuration sets both environments to `no-network`, one CPU, bounded RAM
-and storage requests, and agent/verifier timeouts. Docker build stages need network
-access for images and apt; runtime network policy is a separate setting.
+and storage requests, and agent/verifier timeouts. Reviewed compose files then
+harden both containers: `network_mode: none`, non-root users, dropped
+capabilities, `no-new-privileges`, PID and swap limits and read-only roots. The
+verifier runs PostgreSQL as `postgres` without `runuser`. See
+[HARBOR_AUDIT.md](HARBOR_AUDIT.md) for the configuration and its live audit.
+Docker build stages need network access for images and apt; runtime network
+policy is a separate setting.
 
 ## Limits and next task
 
@@ -52,15 +58,16 @@ the original spike alone does not enforce sealed-only replay. The follow-up
 [sealed policy replay](SEALED_REPLAY.md) now verifies fresh tasks constructed from
 those pre-existing bundles. Base images are now digest-pinned, but apt packages
 remain mutable, even though Harbor/Python dependencies are locked. The
-[boundary audit](HARBOR_AUDIT.md) observed that storage requests are not enforced
-and that `no-network` still permits DNS and ICMP.
+[boundary audit](HARBOR_AUDIT.md) found that Harbor's `no-network` still permitted
+DNS and ICMP and that its containers ran as root. The task's reviewed compose
+hardening now closes those gaps. Storage requests are still not enforced.
 The spike has no recovery controller, adversarial containment proof, private tests,
 production identity, or independent application HTTP assessment. A killed host
 process may require container cleanup; use disposable runners.
 
-Next: retain the sealed policy replay regression and the boundary audit, close
-the gaps it records, then adapt read/list/export
-application tasks using the independent HTTP/database verifier. Establish the
+Next: retain the sealed policy replay regression and the v2 boundary audit, then
+adapt read/list/export application tasks to the hardened layout using the
+independent HTTP/database verifier. Establish the
 three-task fresh-replay gate and dedicated-host policy before model execution.
 Do not infer M2 completion from an oracle reward of 1.
 

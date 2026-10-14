@@ -92,6 +92,10 @@ jobs:
           sudo systemctl start docker
           timeout 60 bash -c 'until docker --host unix:///var/run/docker.sock info >/dev/null 2>&1; do sleep 2; done'
           docker compose version
+      # Harbor's 30-second no-network kernel probe includes this pull and
+      # caches a failure for the whole process.
+      - name: Preload Harbor's pinned egress kernel-probe image
+        run: docker pull alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
       - name: Run controls and sealed replays in separate verifier containers
         run: uv run --locked --group harbor python scripts/harbor_replay.py
       - name: Audit observed container boundary with a reviewed tamper control

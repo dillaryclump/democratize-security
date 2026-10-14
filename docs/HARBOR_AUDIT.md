@@ -1,8 +1,9 @@
 # Harbor worker boundary audit
 
-Status: M2 prerequisite. This records what one trusted Docker daemon actually
-configured for one reviewed, model-free Harbor 0.24.0 trial. It is not a container
-escape proof and does not approve hostile or model-generated candidates.
+Status: M2 prerequisite, audit policy `harbor-docker-boundary-v2`. This records
+what one trusted Docker daemon actually configured for one reviewed, model-free
+Harbor 0.24.0 trial. It is not a container-escape proof and does not approve
+hostile or model-generated candidates.
 
 ## Run
 
@@ -30,60 +31,122 @@ All gating inputs come from the controller, never from the candidate:
 - A safe seal of the host-side verifier log directory taken when the agent
   container dies, before the separate verifier starts.
 
-The generated task copies trusted task files and adds one reviewed
-`solution/solve.sh`. It leaves the unsafe policy in place, writes a forged
-`reward.json`, `reward.txt` and internally consistent all-pass
-`policy-evidence.json` into `/logs/verifier`, keeps a detached writer repeating
-that, and probes the network. A unit test shows host acceptance alone would
-accept those forged files as a pass if they survived.
+The generated task copies the trusted task files, including both compose files,
+and adds one reviewed `solution/solve.sh`. It leaves the unsafe policy in place,
+writes a forged `reward.json`, `reward.txt` and a complete all-pass
+`policy-evidence.json` with a guessed MAC into `/logs/verifier`, keeps a detached
+writer repeating that, and probes TCP, DNS and ICMP. Unit tests show the same
+forgery would pass host acceptance if its MAC used the real nonce, so the
+nonce is what rejects it.
 
-Acceptance requires: the forgery was observed at agent stop; the existing
-`accept_result` sees the genuine reward 0 with complete failing evidence; no
-`reward.json` survives and `reward.txt` is `0`; the listener saw the positive
-control and zero trial connections; and these required audit checks pass:
+Acceptance requires all of:
+
+- the forgery was observed at agent stop;
+- `accept_result` sees the genuine reward 0 with complete, nonce-bound failing
+  evidence;
+- no `reward.json` survives and `reward.txt` is `0`;
+- the listener saw the positive control and zero trial connections;
+- these required audit checks pass.
 
 | Check | Requirement |
 | --- | --- |
 | `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides, different images; every started trial container was inspected |
 | `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before the verifier's first `start` |
-| `no_privilege` | Not privileged; no added capabilities except the sidecar's `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
-| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes |
+| `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
+| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag |
 | `declared_limits` | Memory and CPU equal `task.toml` |
-| `network_isolation` | `none`, or the namespace of the same project's egress sidecar |
+| `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace) |
 | `no_observed_egress` | Positive control observed; no trial connection reached the host |
+| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER`; the last `no-new-privileges` option is true; the agent has an explicit `uid:gid` different from the controller's; task.toml sets no exec user |
+| `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem |
+| `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration |
 
-Missing containers, events or the positive control yield `incomplete`, never
-pass. Evidence stores trial-relative mount sources, not host paths. Every run
-records each container's image ID, limits, user, capabilities and mounts.
+Missing containers, events, the positive control or the nonce yield
+`incomplete`, never pass. Evidence stores trial-relative mount sources, not host
+paths. Every run records each container's image ID, limits, user, capabilities
+and mounts.
 
-## Observed Harbor 0.24.0 behavior
+## Hardened task configuration
 
-Local run on 2026-10-14 (Docker 29.8.2, cgroup v1): all seven checks passed,
-the forgery was observed and then discarded, and the genuine reward was 0. The
-same run recorded these gaps, now listed in every audit record:
+Harbor 0.24.0 merges a task's `environment/docker-compose.yaml` (agent) and
+`tests/docker-compose.yaml` (separate verifier) after its resources and build
+files, then adds its environment, mounts and egress-sidecar overlays. None of
+those overlays set the hardening keys on the main containers. Harbor stops
+routing main through its egress sidecar only when `network_mode` is a literal key
+in the task file. Run-level
+`--extra-docker-compose` files are not applied to separate verifiers, so the
+verifier file must live in `tests/`. These findings come from reading the
+pinned source and were confirmed against live `docker inspect` output.
 
-| Observation | Consequence |
-| --- | --- |
-| The trial's host `verifier/` directory is bind-mounted **read-write into the agent container** at `/logs/verifier` | A candidate can write the files Harbor grades from, and Harbor reads `reward.json` before `reward.txt`. Protection relies on Harbor stopping the agent before verification and emptying the directory inside the verifier. A failed `compose down` is only a logged warning, so the ordering check is a required guard |
-| `no-network` shares a sidecar network namespace; the sidecar (`NET_ADMIN`) redirects all TCP to a local transparent proxy and **accepts DNS and ICMP** | TCP handshakes complete locally but nothing reached the host. Inside the agent, external DNS resolved and an ICMP echo got a reply. These are exfiltration channels; not `--network none` |
-| Agent and verifier run as root with Docker's default capabilities (including `NET_RAW`), writable root filesystem and no PID limit | Raw sockets and unbounded process creation are available to candidate code |
-| Memory equals the declared value but swap is twice it | Effective memory+swap exceeds the declared limit |
-| `storage_mb` produces no Docker storage limit | Disk use is bounded only by the host |
+| Setting | Agent | Verifier | Why |
+| --- | --- | --- | --- |
+| `network_mode` | `none` | `none` | Harbor's `no-network` sidecar still allowed DNS and ICMP |
+| `user` | `10001:10001` | `postgres` | Non-root; the agent uid differs from typical host uids, since an owner may chmod the shared log directory without capabilities |
+| capabilities | drop `ALL` | drop `ALL`, add `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | Harbor's root housekeeping (emptying the shared verifier log directory, fixing host ownership) ignores failures; without these, planted files could survive |
+| `no-new-privileges`, `init`, `pids_limit` | yes, 64 | yes, 128 | Processes are reaped and bounded |
+| `memswap_limit` | `${MEMORY}` | `${MEMORY}` | Harbor exports the declared memory; no extra swap |
+| `read_only` | yes | yes | Writable paths are image volumes (`/candidate`, `/solution`; `/candidate`, `/logs/artifacts`) because `docker cp` cannot write a read-only root or tmpfs; `/tmp` is a `noexec` tmpfs |
 
-Network behavior comes from Harbor's pinned sidecar (`entrypoint.sh`,
-`bin/network-policy`, `gost.yaml`) and was reproduced with its image and entrypoint
-on a plain bridge as a comparison. DNS/ICMP results are the reviewed control's own
-diagnostic output, not listener-verified; external TCP egress beyond the host
-gateway is not independently observed.
+The verifier image sets `test.sh` and `check.py` executable at build time,
+because Harbor's runtime `chmod` silently fails on a read-only root. `test.sh`
+runs PostgreSQL as the unprivileged user directly, with no `runuser`. The oracle
+and tamper `solve.sh` files are executable before upload. `docker cp` keeps
+the host owner (the CI runner), so Harbor's capability-less root `chmod` cannot
+set the bit, and the agent would otherwise get `Permission denied` and a silent
+reward of 0. This was reproduced with a uid-1001-owned copy and fixed. task.toml
+sets no `[agent]` or `[verifier]` user, because Harbor would pass it as `exec -u`
+and override the audited container user. The audit fails if one appears.
 
-## Provenance changes
+## Evidence binding
 
-Task base images are now pinned by multi-arch index digest
+Each `harbor run` gets a fresh 256-bit nonce, passed as
+`--ve 'DS_NONCE=${DS_NONCE}'`. Harbor resolves the template from its own
+environment and hands it only to the separate verifier's test exec. The raw value
+is never persisted in job configuration or shown to the agent. The name avoids
+Harbor's secret-redaction pattern, which would rewrite it inside evidence.
+
+`check.py` deletes any pre-existing grade files without following links. It
+emits no reward unless the nonce is present, and it writes `reward.txt` and
+schema-2 evidence with `O_EXCL|O_NOFOLLOW`. The evidence carries an HMAC-SHA256
+over the artifact hash, checks and reward. Host acceptance requires a valid MAC,
+agreement with Harbor's reward, and no `reward.json`, which this verifier never
+writes but Harbor would prefer. A candidate-written file therefore cannot be
+accepted even if Harbor's directory cleanup failed.
+
+## Observed results
+
+| | Policy v1, before hardening | Policy v2, hardened |
+| --- | --- | --- |
+| Local run (Docker 29.8.2, cgroup v1) | 7/7 checks; 14 gaps | 10/10 checks; 3 gaps |
+| Agent network probe | TCP handshake to Harbor's local proxy; external DNS resolved; ICMP echo answered | No default route |
+| Agent / verifier user | root / root, default capabilities | `10001:10001` with no capabilities / `postgres` with three |
+| Forgery | Observed, then discarded by Harbor | Observed, discarded, and cryptographically unacceptable |
+| CI (GitHub runner uid 1001, cgroup v2) | 7/7 with the same gaps and DNS/ICMP open: [run 38598202622](https://github.com/dillaryclump/democratize-security/actions/runs/38598202622) at `a655e35` | 10/10 with the same 3 gaps, no default route, forgery discarded, genuine reward 0: [run 38640538700](https://github.com/dillaryclump/democratize-security/actions/runs/38640538700) at `cd5c433` |
+
+The network probe row is the reviewed control's self-reported diagnostic, not
+listener-verified. For v2 it is corroborated by the daemon-observed
+`network_mode: none`. v1 evidence is not retroactively relabeled as v2.
+Remaining v2 gaps:
+
+- `agent_can_write_verifier_log_directory`: Harbor mounts the shared directory
+  into the agent itself. The nonce binding and `reward.json` rejection make a
+  write there non-grading.
+- `*_storage_unbounded`: Docker cannot enforce `storage_mb` here.
+  Tmpfs is size-limited, but volumes and the writable layer are bounded only by
+  the host.
+
+The verifier image's declared `/var/lib/postgresql/data` volume is writable but
+unused. Harbor removes anonymous volumes on its default delete.
+
+## Provenance
+
+Task base images are pinned by multi-arch index digest
 (`python:3.12-slim-bookworm`, `postgres:17-bookworm`), including the generated
-replay Dockerfile; a unit test rejects unpinned `FROM` lines. Harbor pins its
-own sidecar and kernel-probe images. The verifier's `apt-get install python3`
-remains mutable, so audits record built image IDs rather than claiming
-reproducible images.
+replay Dockerfile; a unit test rejects unpinned `FROM` stages. Harbor pins its
+own sidecar and kernel-probe images; CI preloads the probe image because Harbor
+caches a failed 30-second probe for the whole process. The verifier's
+`apt-get install python3` remains mutable, so audits record built image IDs
+rather than claiming reproducible images.
 
 ## What this does not establish
 
@@ -92,16 +155,11 @@ The audit trusts the daemon's reports and event timestamps. The forgery snapshot
 races the verifier's startup; a missed snapshot fails rather than passes. The
 listened port is reachable from other local networks during the run; use a
 disposable host. Project names mirror Harbor 0.24.0 sanitization and must be
-re-reviewed on upgrade.
+re-reviewed on upgrade. Model-generated candidates additionally need a dedicated
+worker host and an approved budget.
 
 ## Next bounded task
 
-The recorded gaps block model-generated or hostile candidates. Proposed next
-step, not implemented: a reviewed task `environment/docker-compose.yaml` setting
-`network_mode: none`, non-root user, `cap_drop: [ALL]`, `pids_limit`,
-`read_only` with explicit tmpfs and `memswap_limit`, then rerun this audit to show
-which gaps disappear without breaking the controls. Harbor documents that
-task-authored `network_mode` bypasses its sidecar; whether its phase network
-policy accepts that is untested. Separately, pass a controller nonce only to
-the verifier (`harbor run --ve`) and require it in evidence so forged files
-cannot match. Then adapt the three application tasks.
+Adapt the three application development tasks (read, list/search, export) to
+this hardened layout with the independent HTTP/database verifier. Keep this
+audit and the sealed replay as regressions.

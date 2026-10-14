@@ -103,3 +103,53 @@ branches only. Next: reviewed task compose overrides (no network, non-root,
 dropped capabilities, PID/swap/read-only limits) proven by rerunning the audit,
 and a verifier-only evidence nonce; then three application tasks. No model
 calls, spending or hostile-candidate execution are authorized by this audit.
+
+## Harbor container hardening and nonce-bound evidence (2026-10-14)
+
+Closed most of the gaps the boundary audit recorded. Reviewed compose files in
+the task harden both containers: `network_mode: none`, non-root users (agent
+`10001:10001`, verifier `postgres`), all capabilities dropped (the verifier keeps
+`CHOWN`, `DAC_OVERRIDE` and `FOWNER` for Harbor's root housekeeping),
+`no-new-privileges`, `init`, PID limits, swap equal to memory and read-only
+roots with image volumes for the paths Harbor copies. Each run's verifier
+receives a fresh nonce through `harbor run --ve`, and evidence carries an HMAC
+the host verifies. The host also rejects any `reward.json`. Replay tasks carry
+the same compose files. Audit policy v2 makes the closed gaps required checks and
+verifies the nonce is in no container configuration. See HARBOR_AUDIT.md.
+
+The design came from a source map of pinned Harbor 0.24.0 plus live
+experiments:
+- Under `cap_drop: ALL`, root cannot empty a uid-1001-owned bind mount, so
+  planted files survive.
+- `docker cp` writes only into volumes on a read-only root.
+- Harbor ignores the exit codes of its root housekeeping.
+- A same-uid agent could lock the shared log directory, so the agent's uid
+  must differ from the controller's.
+
+Local evidence (Docker 29.8.2, cgroup v1, PostgreSQL 16):
+- Full suite: 176 passed, no skips. Ruff
+  passes.
+- Hardened controls and sealed replays: oracle 1 / nop 0. Bundle hashes are
+  unchanged (`6fb653ff…`, `34da710d…`).
+- Audit: 10/10 v2 checks. The forgery was observed, then discarded; the genuine
+  reward was 0.
+- The agent probe reports no default route. Gaps fell from 14 to 3: Harbor's
+  shared log mount (now non-grading) and storage limits.
+
+An adversarial review then found two CI-only failures that a root-owned local
+checkout hides. `docker cp` keeps the runner's uid on uploaded scripts, so
+Harbor's capability-less root `chmod` failed and both the oracle and the tamper
+`solve.sh` hit `Permission denied`, with a silent reward of 0. Both scripts are
+now executable before upload; the failure and the fix were reproduced with
+uid-1001-owned copies. The review also found that a task.toml exec user would
+override the audited container user; the audit now fails if one is set.
+
+CI [run 38640538700](https://github.com/dillaryclump/democratize-security/actions/runs/38640538700)
+at `cd5c433` passed all five jobs on a GitHub runner (uid 1001, cgroup v2).
+- Hardened oracle 1 / nop 0 and both sealed replays were accepted with
+  nonce-bound evidence.
+- The audit passed 10/10 v2 checks with the same 3 gaps.
+- The forgery was observed and discarded, the genuine reward was 0, and the
+  agent probe reported no default route.
+
+Next: the three application tasks under this layout. No model calls, spending or hostile-candidate execution are authorized.

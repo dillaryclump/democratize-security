@@ -17,7 +17,10 @@ from democratize_security.contracts import digest
 TRUSTED_FILES = (
     "task.toml",
     "instruction.md",
+    # Reviewed container hardening; a replay must not run with weaker isolation.
+    "environment/docker-compose.yaml",
     "tests/Dockerfile",
+    "tests/docker-compose.yaml",
     "tests/test.sh",
     "tests/check.py",
 )
@@ -51,7 +54,6 @@ def prepare_replay(bundle: dict, template: Path, destination: Path) -> dict:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
         environment = destination / "environment"
-        environment.mkdir()
         (environment / "Dockerfile").write_text(REPLAY_DOCKERFILE)
         (environment / "policy.json").write_bytes(
             base64.b64decode(bundle["files"][0]["content_base64"], validate=True)

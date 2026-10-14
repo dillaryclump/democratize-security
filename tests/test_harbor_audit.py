@@ -1,4 +1,4 @@
-"""Offline audit checks using inspect documents shaped like Harbor 0.24.0 output."""
+"""Offline audit checks using inspect documents shaped like hardened Harbor 0.24.0 output."""
 
 import copy
 import json
@@ -11,6 +11,7 @@ from democratize_security.adapters.runners.harbor_audit import (
     SIDECAR,
     audit,
     compose_project,
+    declared_exec_users,
     declared_limits,
 )
 
@@ -19,49 +20,56 @@ TRIAL = "rls-policy__AbC123"
 LIMITS = {"agent": {"cpus": 1, "memory_mb": 256}, "verifier": {"cpus": 1, "memory_mb": 512}}
 EGRESS = {"control_connections": 1, "trial_connections": 0}
 PROJECT = "com.docker.compose.project"
+SECRET = "d" * 64
+HOST_UID = 1001
 
 
-def container(cid, project, service, *, image, memory=0, network="bridge", binds=(), cap_add=None):
+def container(cid, project, service, *, image, user="", memory=0, binds=(), volumes=()):
+    """Shaped like the containers observed live under the reviewed compose files."""
+    main = service == "main"
     return {
         "Id": cid,
         "Image": image,
         "Config": {
             "Image": f"{project}-{service}",
-            "User": "",
-            "Labels": {
-                "com.docker.compose.project": project,
-                "com.docker.compose.service": service,
-            },
-            "Volumes": None,
+            "User": user,
+            "Env": ["PATH=/usr/bin"],
+            "Labels": {PROJECT: project, "com.docker.compose.service": service},
+            "Volumes": dict.fromkeys(volumes, {}) or None,
         },
         "HostConfig": {
-            "NetworkMode": network,
+            "NetworkMode": "none" if main else f"{project}_default",
             "Privileged": False,
-            "CapAdd": cap_add,
-            "CapDrop": None,
-            "SecurityOpt": None,
+            "CapAdd": None if main else ["CAP_NET_ADMIN", "CAP_NET_RAW"],
+            "CapDrop": ["ALL"] if main else None,
+            "SecurityOpt": ["no-new-privileges:true"] if main else None,
             "PidMode": "",
             "IpcMode": "private",
             "UTSMode": "",
             "UsernsMode": "",
             "Devices": None,
-            "ReadonlyRootfs": False,
+            "ReadonlyRootfs": main,
+            "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"} if main else None,
             "Memory": memory,
-            "MemorySwap": memory * 2,
+            "MemorySwap": memory,
             "NanoCpus": 1_000_000_000 if memory else 0,
-            "PidsLimit": None,
+            "PidsLimit": 64 if main else None,
             "StorageOpt": None,
         },
         "Mounts": [
             {"Type": "bind", "Source": str(source), "Destination": target, "RW": True}
             for target, source in binds
+        ]
+        + [
+            {"Type": "volume", "Name": f"{index:x}" * 64, "Destination": target, "RW": True}
+            for index, target in enumerate(volumes, start=1)
         ],
     }
 
 
 def event(action, cid, project, service, moment):
     # Docker events carry container labels as actor attributes.
-    labels = {"com.docker.compose.project": project, "com.docker.compose.service": service}
+    labels = {PROJECT: project, "com.docker.compose.service": service}
     return {"Action": action, "Actor": {"ID": cid, "Attributes": labels}, "timeNano": moment}
 
 
@@ -70,39 +78,33 @@ def observed(tmp_path):
     trial = tmp_path / "job" / TRIAL
     agent_project = compose_project(f"{TRIAL}__env")
     verifier_project = compose_project(f"{TRIAL}__verifier__trial")
-    caps = ["CAP_NET_ADMIN", "CAP_NET_RAW"]
-    agent_sidecar = container(
-        "as", agent_project, SIDECAR, image="sha256:" + "5" * 64, cap_add=caps
-    )
+    sidecar_image = "sha256:" + "5" * 64
     agent = container(
         "agent",
         agent_project,
         "main",
         image="sha256:" + "a" * 64,
+        user="10001:10001",
         memory=256 * 1024 * 1024,
-        network="container:as",
         binds=[
             ("/logs/agent", trial / "agent"),
             ("/logs/verifier", trial / "verifier"),
             ("/logs/artifacts", trial / "artifacts/logs/artifacts"),
         ],
-    )
-    verifier_sidecar = container(
-        "vs", verifier_project, SIDECAR, image="sha256:" + "5" * 64, cap_add=caps
+        volumes=["/candidate", "/solution"],
     )
     verifier = container(
         "verifier",
         verifier_project,
         "main",
         image="sha256:" + "b" * 64,
+        user="postgres",
         memory=512 * 1024 * 1024,
-        network="container:vs",
         binds=[("/logs/verifier", trial / "verifier")],
+        volumes=["/candidate", "/logs/artifacts", "/var/lib/postgresql/data"],
     )
-    verifier["Config"]["Volumes"] = {"/var/lib/postgresql/data": {}}
-    verifier["Mounts"].append(
-        {"Type": "volume", "Name": "c" * 64, "Destination": "/var/lib/postgresql/data", "RW": True}
-    )
+    verifier["HostConfig"]["CapAdd"] = ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"]
+    verifier["HostConfig"]["PidsLimit"] = 128
     events = [
         event("start", "as", agent_project, SIDECAR, 0),
         event("start", "agent", agent_project, "main", 1),
@@ -111,35 +113,42 @@ def observed(tmp_path):
         event("start", "verifier", verifier_project, "main", 4),
         event("die", "verifier", verifier_project, "main", 5),
     ]
-    containers = {"agent": agent, "agent_sidecar": agent_sidecar}
-    containers |= {"verifier": verifier, "verifier_sidecar": verifier_sidecar}
+    containers = {
+        "agent": agent,
+        "agent_sidecar": container("as", agent_project, SIDECAR, image=sidecar_image),
+        "verifier": verifier,
+        "verifier_sidecar": container("vs", verifier_project, SIDECAR, image=sidecar_image),
+    }
     return trial, containers, events
 
 
-def run(trial, containers, events, egress=EGRESS):
-    return audit(TRIAL, trial, list(containers.values()), events, LIMITS, egress)
+def run(trial, containers, events, egress=EGRESS, secret=SECRET, exec_users=()):
+    inspections = list(containers.values())
+    return audit(
+        TRIAL, trial, inspections, events, LIMITS, egress, secret, HOST_UID, list(exec_users)
+    )
 
 
 def outcomes(record):
     return {check["id"]: check["outcome"] for check in record["checks"]}
 
 
-def test_observed_harbor_shape_passes_and_records_gaps(observed, tmp_path):
+def test_hardened_harbor_shape_passes_with_only_harbor_owned_gaps(observed, tmp_path):
     record = run(*observed)
     assert record["outcome"] == "pass", record
+    assert record["policy"] == "harbor-docker-boundary-v2"
     assert [c["id"] for c in record["checks"]] == list(REQUIRED)
     assert record["security_verdict"] == "not_evaluated"
-    assert {
-        "agent_runs_as_root",
-        "agent_no_pids_limit",
-        "agent_swap_allowed",
+    # Gaps that remain are Harbor's shared log mount and unenforced storage.
+    assert record["observed_gaps"] == [
         "agent_can_write_verifier_log_directory",
-        "network_via_net_admin_sidecar",
-    } <= set(record["observed_gaps"])
+        "agent_storage_unbounded",
+        "verifier_storage_unbounded",
+    ]
     # Evidence carries trial-relative mount sources, never host paths.
     assert str(tmp_path) not in json.dumps(record)
     agent = next(c for c in record["containers"] if c["role"] == "agent")
-    assert {m["source"] for m in agent["mounts"]} == {
+    assert {m["source"] for m in agent["mounts"] if m["type"] == "bind"} == {
         "agent",
         "verifier",
         "artifacts/logs/artifacts",
@@ -150,7 +159,6 @@ def test_observed_harbor_shape_passes_and_records_gaps(observed, tmp_path):
     ("mutation", "check"),
     [
         ("privileged", "no_privilege"),
-        ("main_cap", "no_privilege"),
         ("sidecar_cap", "no_privilege"),
         ("host_pid", "no_privilege"),
         ("unconfined", "no_privilege"),
@@ -159,10 +167,13 @@ def test_observed_harbor_shape_passes_and_records_gaps(observed, tmp_path):
         ("verifier_tests_in_agent", "mount_scope"),
         ("sidecar_bind", "mount_scope"),
         ("named_volume", "mount_scope"),
+        ("undeclared_volume", "mount_scope"),
+        ("extra_tmpfs", "mount_scope"),
+        ("executable_tmpfs", "mount_scope"),
         ("memory", "declared_limits"),
         ("cpus", "declared_limits"),
         ("public_network", "network_isolation"),
-        ("foreign_namespace", "network_isolation"),
+        ("sidecar_namespace", "network_isolation"),
         ("overlap", "agent_stopped_before_verifier"),
         ("restart_during_verification", "agent_stopped_before_verifier"),
         ("restart_and_die_during_verification", "agent_stopped_before_verifier"),
@@ -170,22 +181,40 @@ def test_observed_harbor_shape_passes_and_records_gaps(observed, tmp_path):
         ("duplicate_main", "separate_environments"),
         ("shared_image", "separate_environments"),
         ("egress", "no_observed_egress"),
+        ("agent_root", "least_privilege"),
+        ("verifier_root", "least_privilege"),
+        ("agent_named_user", "least_privilege"),
+        ("agent_host_uid", "least_privilege"),
+        ("agent_cap", "least_privilege"),
+        ("verifier_extra_cap", "least_privilege"),
+        ("caps_not_dropped", "least_privilege"),
+        ("new_privileges", "least_privilege"),
+        ("late_new_privileges", "least_privilege"),
+        ("zero_padded_root", "least_privilege"),
+        ("signed_root", "least_privilege"),
+        ("toml_exec_user", "least_privilege"),
+        ("late_exec_tmpfs", "mount_scope"),
+        ("sidecar_tmpfs", "mount_scope"),
+        ("unlimited_pids", "bounded_resources"),
+        ("no_pids_limit", "bounded_resources"),
+        ("swap", "bounded_resources"),
+        ("writable_root", "bounded_resources"),
+        ("nonce_in_env", "verifier_secret_withheld"),
     ],
 )
 def test_boundary_violation_fails(observed, mutation, check):
     trial, containers, events = copy.deepcopy(observed)
     agent, verifier = containers["agent"], containers["verifier"]
-    egress = EGRESS
+    host = {"agent": agent["HostConfig"], "verifier": verifier["HostConfig"]}
+    egress, exec_users = EGRESS, ()
     if mutation == "privileged":
-        verifier["HostConfig"]["Privileged"] = True
-    elif mutation == "main_cap":
-        agent["HostConfig"]["CapAdd"] = ["CAP_SYS_ADMIN"]
+        host["verifier"]["Privileged"] = True
     elif mutation == "sidecar_cap":
         containers["agent_sidecar"]["HostConfig"]["CapAdd"].append("CAP_SYS_ADMIN")
     elif mutation == "host_pid":
-        agent["HostConfig"]["PidMode"] = "host"
+        host["agent"]["PidMode"] = "host"
     elif mutation == "unconfined":
-        agent["HostConfig"]["SecurityOpt"] = ["seccomp=unconfined"]
+        host["agent"]["SecurityOpt"].append("seccomp=unconfined")
     elif mutation == "docker_socket":
         agent["Mounts"].append(
             {
@@ -205,14 +234,21 @@ def test_boundary_violation_fails(observed, mutation, check):
         containers["agent_sidecar"]["Mounts"] = [dict(agent["Mounts"][0])]
     elif mutation == "named_volume":
         verifier["Mounts"][-1]["Name"] = "shared-cache"
+    elif mutation == "undeclared_volume":
+        agent["Config"]["Volumes"].pop("/solution")
+    elif mutation == "extra_tmpfs":
+        host["agent"]["Tmpfs"]["/candidate"] = "rw,noexec,size=1m"
+    elif mutation == "executable_tmpfs":
+        host["verifier"]["Tmpfs"]["/tmp"] = "rw,exec,size=128m"
     elif mutation == "memory":
-        agent["HostConfig"]["Memory"] = 0
+        host["agent"]["Memory"] = host["agent"]["MemorySwap"] = 0
     elif mutation == "cpus":
-        verifier["HostConfig"]["NanoCpus"] = 4_000_000_000
+        host["verifier"]["NanoCpus"] = 4_000_000_000
     elif mutation == "public_network":
-        agent["HostConfig"]["NetworkMode"] = "bridge"
-    elif mutation == "foreign_namespace":
-        agent["HostConfig"]["NetworkMode"] = "container:vs"
+        host["agent"]["NetworkMode"] = "bridge"
+    elif mutation == "sidecar_namespace":
+        # Harbor's default no-network: allows DNS and ICMP, so v2 rejects it.
+        host["verifier"]["NetworkMode"] = "container:vs"
     elif mutation == "overlap":
         events[2]["timeNano"] = 6
     elif mutation == "restart_during_verification":
@@ -227,19 +263,59 @@ def test_boundary_violation_fails(observed, mutation, check):
         containers["second_agent"] = copy.deepcopy(agent)
     elif mutation == "shared_image":
         verifier["Image"] = agent["Image"]
-    else:
+    elif mutation == "egress":
         egress = {"control_connections": 1, "trial_connections": 1}
-    record = run(trial, containers, events, egress)
+    elif mutation == "agent_root":
+        agent["Config"]["User"] = ""
+    elif mutation == "verifier_root":
+        verifier["Config"]["User"] = "0:0"
+    elif mutation == "agent_named_user":
+        agent["Config"]["User"] = "nobody"
+    elif mutation == "agent_host_uid":
+        agent["Config"]["User"] = f"{HOST_UID}:{HOST_UID}"
+    elif mutation == "agent_cap":
+        host["agent"]["CapAdd"] = ["CAP_CHOWN"]
+    elif mutation == "verifier_extra_cap":
+        host["verifier"]["CapAdd"].append("CAP_SETUID")
+    elif mutation == "caps_not_dropped":
+        host["verifier"]["CapDrop"] = None
+    elif mutation == "new_privileges":
+        host["agent"]["SecurityOpt"] = None
+    elif mutation == "late_new_privileges":
+        # Docker applies options in order, so the last entry wins.
+        host["verifier"]["SecurityOpt"].append("no-new-privileges:false")
+    elif mutation == "zero_padded_root":
+        agent["Config"]["User"] = "00:00"
+    elif mutation == "signed_root":
+        verifier["Config"]["User"] = "+0"
+    elif mutation == "toml_exec_user":
+        # Harbor would `exec -u root`, overriding the observed container user.
+        exec_users = [("agent", "root")]
+    elif mutation == "late_exec_tmpfs":
+        host["agent"]["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,exec,size=16m"
+    elif mutation == "sidecar_tmpfs":
+        containers["verifier_sidecar"]["HostConfig"]["Tmpfs"] = {"/tmp": "rw,noexec"}
+    elif mutation == "unlimited_pids":
+        host["agent"]["PidsLimit"] = 0
+    elif mutation == "no_pids_limit":
+        host["verifier"]["PidsLimit"] = None
+    elif mutation == "swap":
+        host["agent"]["MemorySwap"] = 2 * host["agent"]["Memory"]
+    elif mutation == "writable_root":
+        host["verifier"]["ReadonlyRootfs"] = False
+    else:
+        agent["Config"]["Env"].append(f"DS_NONCE={SECRET}")
+    record = run(trial, containers, events, egress, exec_users=exec_users)
     assert record["outcome"] == "fail", record
     assert outcomes(record)[check] == "fail", record
 
 
 @pytest.mark.parametrize(
-    "missing", ["verifier", "events", "positive_control", "uninspected_service"]
+    "missing", ["verifier", "events", "positive_control", "uninspected_service", "secret"]
 )
 def test_missing_observation_is_incomplete(observed, missing):
     trial, containers, events = copy.deepcopy(observed)
-    egress = EGRESS
+    egress, secret = EGRESS, SECRET
     if missing == "verifier":
         del containers["verifier"]
     elif missing == "events":
@@ -248,9 +324,11 @@ def test_missing_observation_is_incomplete(observed, missing):
         # A started extra service whose inspection failed must not be invisible.
         project = containers["agent"]["Config"]["Labels"][PROJECT]
         events.append(event("start", "ghost", project, "db", 1))
-    else:
+    elif missing == "positive_control":
         egress = {"control_connections": 0, "trial_connections": 0}
-    record = run(trial, containers, events, egress)
+    else:
+        secret = ""
+    record = run(trial, containers, events, egress, secret)
     assert record["coverage"] == "incomplete"
     assert record["outcome"] == "incomplete"
 
@@ -258,7 +336,7 @@ def test_missing_observation_is_incomplete(observed, missing):
 def test_unrelated_containers_are_ignored(observed):
     trial, containers, events = copy.deepcopy(observed)
     containers["other"] = copy.deepcopy(containers["agent"])
-    containers["other"]["Config"]["Labels"]["com.docker.compose.project"] = "other__env"
+    containers["other"]["Config"]["Labels"][PROJECT] = "other__env"
     containers["other"]["HostConfig"]["Privileged"] = True
     assert run(trial, containers, events)["outcome"] == "pass"
 
@@ -267,3 +345,13 @@ def test_project_names_and_declared_limits_follow_pinned_harbor():
     assert compose_project("RLS-Policy__AbC.1__env") == "rls-policy__abc-1__env"
     assert compose_project("_x") == "0_x"
     assert declared_limits(ROOT / "tasks/harbor/rls-policy/task.toml") == LIMITS
+
+
+def test_declared_exec_users_cover_task_and_steps(tmp_path):
+    assert declared_exec_users(ROOT / "tasks/harbor/rls-policy/task.toml") == []
+    toml = tmp_path / "task.toml"
+    toml.write_text(
+        '[agent]\nuser = "root"\n[verifier]\ntimeout_sec = 1\n'
+        "[[steps]]\nname = 'one'\n[steps.verifier]\nuser = 0\n"
+    )
+    assert declared_exec_users(toml) == [("agent", "root"), ("verifier", 0)]

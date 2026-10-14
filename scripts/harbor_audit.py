@@ -9,6 +9,7 @@ observed (then discarded) forgery, no observed connection and a passing audit.
 import base64
 import hashlib
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -17,7 +18,11 @@ import time
 
 import harbor_spike
 
-from democratize_security.adapters.runners.harbor_audit import audit, declared_limits
+from democratize_security.adapters.runners.harbor_audit import (
+    audit,
+    declared_exec_users,
+    declared_limits,
+)
 from democratize_security.artifacts import seal
 from democratize_security.policy_replay import AGENT_BASE_IMAGE, write_record
 
@@ -26,7 +31,9 @@ TRUSTED_FILES = (
     "task.toml",
     "instruction.md",
     "environment/Dockerfile",
+    "environment/docker-compose.yaml",
     "tests/Dockerfile",
+    "tests/docker-compose.yaml",
     "tests/test.sh",
     "tests/check.py",
 )
@@ -35,12 +42,15 @@ UNSAFE_POLICY = b'{"enabled":false,"predicate":"all"}\n'
 FORGED = {
     "reward.txt": b"1\n",
     "reward.json": b'{"reward": 1}\n',
-    # Internally consistent forged pass for the actual submitted bytes.
+    # The strongest forgery possible without the verifier nonce: a complete,
+    # internally consistent pass for the submitted bytes with a guessed MAC.
     "policy-evidence.json": json.dumps(
         {
             "artifact_sha256": hashlib.sha256(UNSAFE_POLICY).hexdigest(),
             "checks": dict.fromkeys(sorted(harbor_spike.CHECKS), True),
-            "schema_version": 1,
+            "mac": "0" * 64,
+            "reward": 1,
+            "schema_version": 2,
         },
         sort_keys=True,
     ).encode()
@@ -48,8 +58,8 @@ FORGED = {
 }
 # Connects to the default gateway: the host side of whatever network exists.
 # Printed lines are self-reported diagnostics; only the host listener gates.
-# Harbor's TCP proxy completes handshakes it never forwards, so "tcp handshake"
-# alone is not egress. DNS and ICMP show channels its no-network mode leaves open.
+# Harbor's sidecar proxy completed TCP handshakes it never forwarded and let DNS
+# and ICMP out; with network_mode none every probe should fail.
 PROBE = """import socket, struct
 routes = [line.split() for line in open("/proc/net/route").read().splitlines()[1:]]
 gateways = [r[2] for r in routes if r[1] == "00000000"]
@@ -109,7 +119,11 @@ def prepare_tamper(destination, port):
         shutil.copyfile(harbor_spike.TASK / name, target)
     (destination / "solution").mkdir()
     probe = PROBE.replace("PORT", str(port)).strip()
-    (destination / "solution/solve.sh").write_text(SOLVE.format(forge=forge, probe=probe))
+    solve = destination / "solution/solve.sh"
+    solve.write_text(SOLVE.format(forge=forge, probe=probe))
+    # docker cp keeps the host owner, so Harbor's capability-less root chmod
+    # fails on CI; the unprivileged agent needs the bit already set.
+    solve.chmod(0o755)
 
 
 class Listener:
@@ -233,13 +247,7 @@ def main():
         control_connections = listener.take(wait_for=1)
         task = OUTPUT / "task-tamper"
         prepare_tamper(task, listener.port)
-        subprocess.run(
-            ["harbor", "run", "-p", str(task), "-a", "oracle", "-n", "1", "-k", "1", "-r", "0"]
-            + ["--jobs-dir", str(OUTPUT), "--job-name", "tamper"],
-            check=True,
-            timeout=600,
-            cwd=harbor_spike.ROOT,
-        )
+        nonce = harbor_spike.run_trial(task, "oracle", OUTPUT, "tamper")
     finally:
         watcher.stop()
     trial_connections = listener.take()
@@ -256,6 +264,9 @@ def main():
         watcher.events,
         declared_limits(task / "task.toml"),
         {"control_connections": control_connections, "trial_connections": trial_connections},
+        nonce,
+        os.getuid(),
+        declared_exec_users(task / "task.toml"),
     )
     final = sorted(path.name for path in (trial / "verifier").iterdir())
     summary = {
@@ -270,7 +281,7 @@ def main():
         summary["agent_reported_probe_diagnostic"] = base64.b64decode(log).decode()[:400]
         # The real verifier must grade the unsafe policy; a surviving forged
         # reward.json would take precedence over reward.txt in Harbor 0.24.0.
-        summary["acceptance"] = harbor_spike.accept_result(job, "oracle", 0)
+        summary["acceptance"] = harbor_spike.accept_result(job, "oracle", 0, nonce)
         if watcher.forgery is not True:
             raise ValueError("forgery was not observed; the control did not run")
         reward = seal(trial / "verifier", ["reward.txt"])["files"][0]["content_base64"]
