@@ -325,3 +325,28 @@ def test_app_that_never_starts_gets_zero(verifier, apps, tmp_path, monkeypatch):
     # Never an acceptable control outcome: controls require a started app.
     with pytest.raises(ValueError):
         apps["accept_app"](job, "oracle", apps["expected_outcomes"]("invoice-read", "nop"), NONCE)
+
+
+def test_launcher_imports_candidates_like_uvicorn(tmp_path, monkeypatch):
+    # dataclasses (and pydantic forward references) look the defining module
+    # up in sys.modules while it executes; a correct app must not crash.
+    import importlib.util
+
+    pytest.importorskip("uvicorn")
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    path = task("invoice-read") / "tests/launch.py"
+    spec = importlib.util.spec_from_file_location("ds_app_launcher", path)
+    launcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launcher)
+    candidate = tmp_path / "app.py"
+    candidate.write_text(
+        "from __future__ import annotations\n"
+        "from dataclasses import dataclass\n\n\n"
+        "@dataclass\nclass Invoice:\n    id: int\n\n\n"
+        "def create_app():\n    return Invoice(1)\n"
+    )
+    monkeypatch.delitem(sys.modules, "app", raising=False)
+    try:
+        assert launcher.load(candidate).create_app().id == 1
+    finally:
+        sys.modules.pop("app", None)
