@@ -21,7 +21,7 @@ Python 3.12 is the default; CI also checks 3.13. `uv sync --locked` verifies the
 
 ## Routine workflow
 
-Start from current main. Create a small task branch, give the agent an issue plus `AGENTS.md`, and require a PR with observed tests. For simultaneous coding sessions, use separate branches/worktrees so tools cannot overwrite one another. Avoid sharing a mutable working directory between agents.
+Start from current main. Follow [COORDINATION.md](COORDINATION.md): inspect open PRs/issues, claim a bounded task, and record its owner/session, dependencies and branch. Give the agent that issue plus `AGENTS.md`, and require a PR with observed tests. For simultaneous coding sessions, use separate branches/worktrees so tools cannot overwrite one another. Avoid sharing a mutable working directory between agents.
 
 ```bash
 uv run --locked pytest
@@ -50,9 +50,9 @@ Repository configuration files cannot enable these settings by themselves. The f
 - Configure Codespaces idle shutdown/spend limits and provider budgets before paid work.
 - Review Dependabot PRs; automatic updates are not automatic merges.
 
-## First agent assignment
+## Next agent assignment
 
-"Read AGENTS.md and the required docs. Work on M1 only after M0 assumptions are resolved. Implement a synthetic two-tenant reference invoice app and explicit vulnerable variants, plus an independent verifier against real PostgreSQL. Preserve useful reads, lists/search and CSV. Demonstrate positive and negative outcomes, including incomplete-verification rejection. Do not add paid model calls or GEPA. Submit a small reviewable PR and update STATUS.md."
+Read AGENTS.md, STATUS.md and COORDINATION.md, then inspect live issues and open PRs. Select an unclaimed bounded task and record ownership before editing. The original M1 reference assignment is implemented; do not restart it. Existing collector work is tracked in #17/#19. Complementary regression controls are tracked in #20; offline persistence design in #21.
 
 ## Reference integration gate
 

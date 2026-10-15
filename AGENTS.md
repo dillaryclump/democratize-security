@@ -3,7 +3,7 @@
 ## Required orientation
 
 1. Read `README.md` and `docs/PROJECT.md` for purpose and product scope.
-2. Read `docs/STATUS.md` for actual implementation, next work and blockers.
+2. Read `docs/STATUS.md` for actual implementation, next work and blockers, and `docs/COORDINATION.md` before claiming work.
 3. Read `docs/ARCHITECTURE.md` and `docs/THREAT_MODEL.md` before changing boundaries.
 4. Read `docs/RESEARCH_PROTOCOL.md` and `docs/CONTRACTS.md` before touching evaluation.
 5. Read `docs/ROADMAP.md`, `docs/DEVELOPMENT.md`, relevant decisions and the assigned issue.
@@ -18,6 +18,7 @@ Dillon owns architecture, security assumptions, budget and acceptance. AI agents
 
 ## Work rules
 
+- Before editing, check remote main, open PRs and task issues; claim one bounded issue with execution owner/session, branch, scope, dependencies and next action. Recheck for competing work before publishing. Claims are advisory, not locks; preserve other agents' changes. See `docs/COORDINATION.md`.
 - Make one bounded change per branch/PR. Read the current branch, worktree status and relevant files first. Preserve unrelated work.
 - Keep the Python core independent of Harbor, GEPA, model providers and benchmark internals. Add dependencies only for a working milestone and commit the updated `uv.lock`.
 - Prefer explicit data contracts over premature services or abstraction forests. One process, one active trial, SQLite plus content-addressed artifacts are the initial runtime design.

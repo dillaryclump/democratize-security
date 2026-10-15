@@ -21,3 +21,10 @@ body:
       description: Include useful behavior, failure cases and exact verification.
     validations:
       required: true
+  - type: textarea
+    id: coordination
+    attributes:
+      label: Ownership and dependencies
+      description: Before starting, update status, execution owner/session, UTC time, baseline SHA, branch/PR, overlapping paths, dependencies and exact next action. Use unclaimed if no session owns it.
+    validations:
+      required: true
