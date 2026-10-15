@@ -15,7 +15,7 @@ For each requested task (default: all three), under trusted host observation:
   in /logs/artifacts, none of which may be staged for the verifier.
 
 Every trial must also pass the host-observed boundary audit, with no host
-listener connection during the whole run. Ten finite trials per task, no retries.
+listener connection during the whole run. Eleven finite trials per task, no retries.
 """
 
 import base64
@@ -90,6 +90,15 @@ LOGS = (
     "test -L /logs/artifacts/link\n"
     "cp /solution/app.py /candidate/app.py"
 )
+# Makes the agent's own container refuse Harbor's later execs by killing its
+# init, forcing Harbor's unfiltered fallback copy of /logs/artifacts; host
+# acceptance must detect it. The file is small: no disk is spent proving it.
+FALLBACK = (
+    "printf 'staged by fallback\\n' > /logs/artifacts/fallback.txt\n"
+    "cp /solution/app.py /candidate/app.py\n"
+    "echo '{marker}'\n"
+    "kill -TERM 1"
+)
 MARKER = "extraction control in place"
 
 
@@ -142,11 +151,12 @@ def prepare_control(task, destination, app):
     (destination / "solution/app.py").write_bytes(app)
 
 
-def prepare_extraction(task, destination, script):
+def prepare_extraction(task, destination, script, *, marker=True):
     """Copy the trusted task with the reference app and a reviewed hostile solve.sh."""
     prepare_control(task, destination, (task / "solution/app.py").read_bytes())
     solve = destination / "solution/solve.sh"
-    solve.write_text(f"#!/bin/sh\nset -eu\n{script}\necho '{MARKER}'\n")
+    ending = f"echo '{MARKER}'\n" if marker else ""
+    solve.write_text(f"#!/bin/sh\nset -eu\n{script}\n{ending}")
     solve.chmod(0o755)
 
 
@@ -172,6 +182,7 @@ def accept_rejected(job, nonce, secret):
         raise ValueError("hostile solution did not put its artifact in place")
     if os.path.lexists(trial / "artifacts/app.py"):
         raise ValueError("collector let a rejected artifact through")
+    harbor_spike.check_staged_logs(trial)
     # Harbor 0.24.0 writes the collection manifest as a list of entries.
     manifest = json.loads((trial / "artifacts/manifest.json").read_text())
     entries = [e for e in manifest if e.get("source") == "/candidate/app.py"]
@@ -200,11 +211,23 @@ def accept_logs(job):
     trials = [path.parent for path in job.glob("*/result.json")]
     if len(trials) != 1:
         raise ValueError("expected exactly one trial result")
+    harbor_spike.check_staged_logs(trials[0])
+    return "nothing staged"
+
+
+def detect_fallback(job):
+    """The fallback control must really force the copy, and acceptance must catch it."""
+    trials = [path.parent for path in job.glob("*/result.json")]
+    if len(trials) != 1:
+        raise ValueError("expected exactly one trial result")
     staged = trials[0] / "artifacts/agent-artifacts"
-    entries = sorted(path.name for path in staged.iterdir()) if staged.is_dir() else []
-    if os.path.islink(staged) or entries:
-        raise ValueError("agent-written /logs/artifacts content was staged for the verifier")
-    return "empty"
+    if not (staged / "fallback.txt").is_file() or (staged / "fallback.txt").is_symlink():
+        raise ValueError("fallback control did not force Harbor's unfiltered copy")
+    try:
+        harbor_spike.check_staged_logs(trials[0])
+    except ValueError:
+        return "fallback staged and rejected"
+    raise ValueError("acceptance missed a staged /logs/artifacts")
 
 
 def run_task(name, trials):
@@ -265,6 +288,11 @@ def run_task(name, trials):
     prepare_extraction(task, logs, LOGS.format(canary=shlex.quote(str(canary.resolve()))))
     extraction["logs"] = trial("oracle", logs, "oracle", "logs")
     extraction["logs"]["verifier_logs_artifacts"] = accept_logs(output / "logs")
+    fallback = output / "task-logs-fallback"
+    prepare_extraction(task, fallback, FALLBACK.format(marker=MARKER), marker=False)
+    nonce = harbor_spike.run_trial(fallback, "oracle", output, "logs-fallback")
+    trials.append((output / "logs-fallback", fallback, nonce))
+    extraction["logs-fallback"] = detect_fallback(output / "logs-fallback")
     return {"task": name, "controls": results, "replays": replays, "extraction": extraction}
 
 

@@ -46,6 +46,14 @@ def forged_trial(control, root, *, with_reward_json):
     (trial / "verifier").mkdir(parents=True)
     (trial / "artifacts").mkdir()
     (trial / "artifacts/policy.json").write_bytes(control["UNSAFE_POLICY"])
+    logs = {
+        "source": "/logs/artifacts",
+        "destination": "artifacts/agent-artifacts",
+        "type": "directory",
+        "status": "failed",
+        "service": None,
+    }
+    (trial / "artifacts/manifest.json").write_text(json.dumps([logs]))
     for name, data in control["FORGED"].items():
         if with_reward_json or name != "reward.json":
             (trial / "verifier" / name).write_bytes(data)

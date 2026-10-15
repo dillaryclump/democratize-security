@@ -34,7 +34,7 @@ uv sync --locked --group harbor
 uv run --locked --group harbor python scripts/harbor_apps.py invoice-read
 ```
 
-Pass one or more task names (default: all three). Per task, ten finite trials
+Pass one or more task names (default: all three). Per task, eleven finite trials
 with no retries, each bounded to 600 seconds. Existing
 `.research/harbor-apps/<task>` outputs cause refusal. Use a disposable Linux
 Docker host: the run briefly listens on a random host TCP port. CI job
@@ -144,8 +144,11 @@ in Harbor's manifest, nonce-bound `invalid_submission` evidence and the canary's
 random secret in no trial output. A valid reference app saved as `0600` must
 pass every check, and so must a valid app whose `solve.sh` also leaves a 1 GiB
 sparse file, a link to the canary, a FIFO and a mode-000 file in
-`/logs/artifacts`; nothing from there may be staged for the verifier. All ten
-trials per task are audited.
+`/logs/artifacts`; nothing from there may be staged for the verifier. A last
+control kills its own container's init after leaving a small file there, which
+forces Harbor's unfiltered fallback copy; it must show the file was staged and
+that host acceptance rejects the trial. All eleven trials per task are
+audited.
 
 ## Consistency rules
 
@@ -240,12 +243,19 @@ evidence of record for the final rules.
   sidecar collection; audit v4 verifies that from Docker events.
 - Harbor would also re-upload the agent-written `/logs/artifacts` bind mount
   into the verifier unchecked (sparse files expanded, special files passed
-  through, unreadable files turning into a setup exception). Each task
-  therefore declares that convention entry explicitly with `exclude = ["*"]`
-  and a fresh `destination`: Harbor tars nothing into the agent's `/tmp`
-  tmpfs, cannot copy that archive out, and stages at most an empty directory.
-  The `logs` control proves this per task. The agent's files stay in the host
-  bind mount, so host storage remains the host's limit.
+  through, unreadable files turning into a setup exception). Each task declares
+  that convention entry explicitly with `exclude = ["*"]` and a fresh
+  `destination`. While the agent's container still accepts execs, Harbor tars
+  nothing into its `/tmp` tmpfs, cannot copy that archive out, and stages at
+  most an empty directory; the `logs` control proves this per task. An agent
+  that makes its container refuse execs (exhausting its PIDs or killing its
+  init) makes Harbor fall back to an unfiltered copy, which no task setting can
+  prevent. Host acceptance rejects every trial whose manifest or staging
+  directory shows that, and the `logs-fallback` control proves the detection.
+  The copy itself has already used host storage by then. Nothing ever reads
+  that directory, so the residual impact is availability, the same class as the
+  host-storage limit below, and needs per-trial storage quotas on the dedicated
+  worker host.
 - Any other post-agent verifier exception (Harbor or infrastructure) is still
   possible; host acceptance rejects it, and scoring must count it as a
   failure, never exclude or retry it.

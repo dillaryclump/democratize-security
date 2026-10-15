@@ -295,8 +295,8 @@ place.
 
 The review also confirmed that Harbor itself re-uploads the agent's
 bind-mounted `/logs/artifacts` directory into the verifier unchecked. Each task
-now closes that channel with an explicit convention entry (`exclude = ["*"]`
-and a fresh `destination`). Harbor then tars nothing into the agent's `/tmp`
+now replaces that convention entry with an explicit one (`exclude = ["*"]` and
+a fresh `destination`). Harbor then tars nothing into the agent's `/tmp`
 tmpfs, cannot copy that archive out, and stages at most an empty directory. A
 tenth control per task (`logs`) leaves a 1 GiB sparse file, a canary link, a
 FIFO and a mode-000 file there next to a valid app. Locally it passed with
@@ -304,8 +304,25 @@ reward 1 and an empty staging directory, while the hostile files stayed in the
 agent's host bind mount; all 10 audits passed, and the policy-task tamper audit
 and replay hashes were unchanged.
 
-Remaining limit: storage is bounded only by the host.
+A follow-up review (reviewer and skeptic agreeing) showed that the exclusion
+holds only while the agent's container accepts execs. If the agent exhausts its
+PIDs or kills its init, Harbor's directory probe fails and it falls back to an
+unfiltered copy, which no task setting can prevent. Host acceptance
+(`check_staged_logs`) now rejects every trial, in both task families, whose
+manifest or staging directory shows that. An eleventh control
+(`logs-fallback`) kills its own container's init after leaving a small file,
+and must show both the forced copy and the rejection. Locally it did both:
+Harbor's manifest recorded `/logs/artifacts` as a `file` entry with status `ok`,
+the agent's file was staged, and Harbor itself still graded reward 1 with no
+exception, which host acceptance rejected. The other ten `invoice-read` trials
+behaved as reviewed, 11/11 audits passed with zero egress, and the policy-task
+replays and tamper audit passed with the check applied.
+
+Remaining limit: the fallback copy and the agent's direct writes use host
+storage before anything can reject them. Nothing reads that directory, so the
+impact is availability, bounded only by the host.
 
 No model calls, spending or hostile-candidate execution are authorized. Next:
+- per-trial storage quotas on a dedicated worker host;
 - owner review of the M2 evidence;
-- a dedicated worker host and an approved budget before any agent runs.
+- an approved budget before any agent runs.

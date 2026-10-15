@@ -311,6 +311,19 @@ def trial_with(verifier, tmp_path, monkeypatch, *, started, result=None):
     (trial / "artifacts").mkdir()
     app = REFERENCE.read_bytes()
     (trial / "artifacts/app.py").write_bytes(app)
+    (trial / "artifacts/manifest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "source": "/logs/artifacts",
+                    "destination": "artifacts/agent-artifacts",
+                    "type": "directory",
+                    "status": "failed",
+                    "service": None,
+                }
+            ]
+        )
+    )
     candidate = tmp_path / "candidate.py"
     candidate.write_bytes(app)
     monkeypatch.setattr(verifier, "provision", lambda *args: None)
@@ -441,7 +454,13 @@ def rejected_trial(verifier, tmp_path, secret):
         candidate=tmp_path / "not-collected.py",
     )
     manifest = [
-        {"source": "/logs/artifacts", "status": "empty", "service": None},
+        {
+            "source": "/logs/artifacts",
+            "destination": "artifacts/agent-artifacts",
+            "type": "directory",
+            "status": "failed",
+            "service": None,
+        },
         {"source": "/candidate/app.py", "status": "failed", "service": "collector"},
     ]
     (trial / "artifacts/manifest.json").write_text(json.dumps(manifest))
@@ -516,13 +535,32 @@ def test_extraction_controls_are_reviewed_scripts(apps, tmp_path):
     assert (hostile / "solution/app.py").read_bytes() == REFERENCE.read_bytes()
 
 
-def test_logs_control_requires_nothing_staged(apps, tmp_path):
+def test_logs_controls_require_nothing_staged(apps, tmp_path):
     trial = tmp_path / "job" / "task-logs__x"
-    (trial / "artifacts/agent-artifacts").mkdir(parents=True)
+    (trial / "artifacts").mkdir(parents=True)
     (trial / "result.json").write_text("{}")
-    assert apps["accept_logs"](trial.parent) == "empty"
-    (trial / "artifacts/agent-artifacts/sparse").write_bytes(b"")
+    (trial / "artifacts/manifest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "source": "/logs/artifacts",
+                    "destination": "artifacts/agent-artifacts",
+                    "type": "directory",
+                    "status": "failed",
+                    "service": None,
+                }
+            ]
+        )
+    )
+    assert apps["accept_logs"](trial.parent) == "nothing staged"
+    # The fallback control passes only if the copy really happened and was caught.
+    with pytest.raises(ValueError, match="did not force"):
+        apps["detect_fallback"](trial.parent)
+    (trial / "artifacts/agent-artifacts").mkdir()
+    (trial / "artifacts/agent-artifacts/fallback.txt").write_text("staged by fallback\n")
     with pytest.raises(ValueError):
         apps["accept_logs"](trial.parent)
+    assert apps["detect_fallback"](trial.parent) == "fallback staged and rejected"
     for line in ("truncate -s 1G", "ln -s {canary}", "mkfifo", "install -m 000"):
         assert line in apps["LOGS"]
+    assert apps["FALLBACK"].rstrip().endswith("kill -TERM 1")
