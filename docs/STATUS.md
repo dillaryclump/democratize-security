@@ -216,7 +216,9 @@ Review fixes after the first evidence:
   - v3 admitted the named candidate volume without an app;
   - several docs overstated or were stale.
 
-  Mutation checks confirm the new tests fail on the defects they target.
+  Mutation checks confirm the new tests fail on the defects they target. CI
+  [run 38748449846](https://github.com/dillaryclump/democratize-security/actions/runs/38748449846)
+  at `82f0603` passed every job with the final code and rules.
 - The review also confirmed a pre-existing gap: Harbor moves the artifact
   through the host unchecked, so a symlink is resolved there and nothing bounds
   the size. This holds for both task families and is recorded as a limit in

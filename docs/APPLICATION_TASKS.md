@@ -192,8 +192,13 @@ green, including one `harbor-apps` job per task (5 trials and 5 v3 audits each):
 - [run 38745209032](https://github.com/dillaryclump/democratize-security/actions/runs/38745209032) at `8c5a56e`, the first under the namespace and uid
   rules with the verifier as `999:999`.
 
-Runs before `8c5a56e` used earlier drafts of v3. The run at the merged head is
-the evidence of record for the final rules.
+- [run 38748449846](https://github.com/dillaryclump/democratize-security/actions/runs/38748449846) at `82f0603`, the final code of this change: every job
+  green, including the real mode-000 `unreadable_submission` case on the
+  uid-1001 runner (240 passed; only the 7 Docker worker tests skip in that job
+  and run in their own).
+
+Runs before `8c5a56e` used earlier drafts of v3. Run 38748449846 is the
+evidence of record for the final rules.
 
 ## Limits
 
