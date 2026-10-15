@@ -318,6 +318,12 @@ exception, which host acceptance rejected. The other ten `invoice-read` trials
 behaved as reviewed, 11/11 audits passed with zero egress, and the policy-task
 replays and tamper audit passed with the check applied.
 
+CI [run 38795922164](https://github.com/dillaryclump/democratize-security/actions/runs/38795922164)
+at `e546181`, the final code of this change, passed every job on the GitHub
+runner (uid 1001, cgroup v2). Each `harbor-apps` job ran all eleven trials,
+including the `logs` control with its mode-000 file and the forced fallback,
+with eleven passing v4 audits. This run is the evidence of record.
+
 Remaining limit: the fallback copy and the agent's direct writes use host
 storage before anything can reject them. Nothing reads that directory, so the
 impact is availability, bounded only by the host.

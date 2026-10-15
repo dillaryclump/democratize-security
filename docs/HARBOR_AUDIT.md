@@ -219,7 +219,9 @@ unreadable file left there. An agent that makes its container refuse execs
 forces Harbor's unfiltered fallback copy, which no task setting prevents: host
 acceptance (`check_staged_logs`, on every trial of both task families) rejects
 it, the `logs-fallback` control proves that detection, and the storage the copy
-used is the remaining availability limit.
+used is the remaining availability limit. CI
+[run 38795922164](https://github.com/dillaryclump/democratize-security/actions/runs/38795922164)
+at `e546181` passed all of this, with every trial audited under v4.
 
 ## Next bounded task
 
