@@ -85,9 +85,9 @@ def wait_until_ready(client, seconds=READY_SECONDS):
     return False
 
 
-def grade(raw, handoff=HANDOFF, admin_dsn=ADMIN_DSN, url=APP_URL):
+def grade(raw, rejected=None, handoff=HANDOFF, admin_dsn=ADMIN_DSN, url=APP_URL):
     if raw is None:
-        return {"app_started": False, "outcome": "invalid_submission", "result": None}
+        return {"app_started": False, "outcome": rejected, "result": None}
     password = secrets.token_hex(24)
     # Infrastructure failures propagate: no reward is emitted.
     provision(admin_dsn, DATABASE, ROLE, password)
@@ -120,10 +120,14 @@ def main(output=Path("/logs/verifier"), environ=os.environ, candidate=CANDIDATE,
         # Infrastructure failure: no reward is emitted.
         raise SystemExit("verifier nonce missing")
     try:
-        raw = read_candidate(candidate)
+        raw, rejected = read_candidate(candidate), None
+    except PermissionError:
+        # Harbor keeps the agent's mode bits and this verifier runs as another
+        # user, so a valid file saved as 0600 is unreadable here: still a zero.
+        raw, rejected = None, "unreadable_submission"
     except (OSError, ValueError, UnicodeError):
-        raw = None
-    graded = grade(raw, **options)
+        raw, rejected = None, "invalid_submission"
+    graded = grade(raw, rejected, **options)
     result = graded["result"]
     checks = (
         {check["id"]: check["outcome"] for check in result["checks"]}

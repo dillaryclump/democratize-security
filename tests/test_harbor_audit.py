@@ -543,6 +543,18 @@ def test_app_boundary_violation_fails(observed_app, mutation, check):
     assert outcomes(record)[check] == "fail", record
 
 
+def test_candidate_volume_needs_an_app(observed):
+    # Without an app the verifier keeps v2's rule: no named volumes at all.
+    trial, containers, events = copy.deepcopy(observed)
+    verifier = containers["verifier"]
+    volume = compose_project(f"{TRIAL}__verifier__trial") + "_candidate"
+    verifier["Config"]["Volumes"].pop("/candidate")
+    verifier["Mounts"] = [m for m in verifier["Mounts"] if m["Destination"] != "/candidate"]
+    verifier["Mounts"].append(candidate_mount(volume, writable=True))
+    record = run(trial, containers, events)
+    assert outcomes(record)["mount_scope"] == "fail", record
+
+
 def test_app_without_declared_limits_is_incomplete(observed_app):
     record = run(*observed_app)
     assert outcomes(record)["declared_limits"] == "not_evaluated"

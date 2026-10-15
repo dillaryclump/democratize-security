@@ -61,9 +61,11 @@ The separate verifier has two services, built from `tests/`:
 - `app`: the candidate runtime. Locked dependencies and a trusted launcher only,
   no verifier code. It runs as `20001:20001` with no capabilities, 256 MiB
   without swap, one CPU, 64 PIDs and a read-only root. A 16 MiB `noexec` `/tmp`
-  tmpfs matches the agent's. It joins `main`'s network namespace, which has
-  only loopback, and shares no other namespace. Its sole mount is the
-  project-scoped `candidate` volume, read-only. `main` runs as the image's
+  tmpfs matches the agent's. Of the namespaces Docker separates per container,
+  it shares only `main`'s network namespace, which has only loopback; like
+  every container here it uses the host's user namespace (and, on cgroup v1,
+  cgroup namespace). Its sole mount is the project-scoped `candidate` volume,
+  read-only. `main` runs as the image's
   `postgres` user by number (`999:999`), so the audit can prove the uids differ.
 
 One verification:
@@ -85,9 +87,12 @@ One verification:
 5. `run.py` waits up to 60 seconds for `/health`, runs `verify()` (byte-identical
    to `verification/reference.py`) and writes evidence and `reward.txt`.
 
-Candidate code therefore never shares a process, filesystem, uid or PID or IPC
-namespace with the verifier; audit v3 checks each of these on every trial. It cannot reach Harbor's log mounts, the nonce, the verifier
-sources or the superuser socket. Its only network peer is the database, as the
+Candidate code therefore never shares a process, uid, or PID or IPC namespace
+with the verifier, and its only shared filesystem is the read-only candidate
+volume, the handoff channel, where `run.py` writes nothing but the three
+handoff files. Audit v3 checks each of these on every trial. Candidate code
+cannot reach Harbor's log mounts, the nonce, the verifier sources or the
+superuser socket. Its only network peer is the database, as the
 restricted role. The agent container is stopped before any of this starts.
 
 ## Evidence and acceptance
@@ -96,7 +101,9 @@ restricted role. The agent container is stopped before any of this starts.
 the app started, coverage, outcome, every check's outcome, fixed failure details
 and the reward. It carries an HMAC-SHA256 over all other fields, keyed with the
 run's nonce (`harbor run --ve`), and is written with `O_EXCL|O_NOFOLLOW`. The
-reward is 1 only for a complete pass. Outcomes `invalid_submission` and
+reward is 1 only for a complete pass. Outcomes `invalid_submission`,
+`unreadable_submission` (a valid file the verifier user cannot read, such as
+one saved as 0600, since Harbor keeps the agent's mode bits) and
 `app_not_started` are bound zeros, not infrastructure errors.
 
 Host acceptance (`accept_app`) builds on the policy task's checks. It requires
@@ -158,9 +165,10 @@ Then copy both files to the other tasks and to each `environment/`.
 
 Local, at `720fb80`: Docker 29.8.2 on cgroup v1 as root, all three tasks. Images
 were built with an uncommitted patch that lets pip trust this sandbox's
-TLS-intercepting proxy; nothing else differed from that commit's files. Later
-commits (launcher registration, the app's `/tmp`, namespace and uid rules) are
-covered by the CI runs below and by later local runs where STATUS.md says so.
+TLS-intercepting proxy; nothing else differed from that commit's files. These
+audits ran under an earlier draft of v3 whose verifier user was `postgres`,
+which the final rules reject. Later changes are covered by the CI runs below and
+by later local runs where STATUS.md says so.
 
 | | read | search | export |
 | --- | --- | --- | --- |
@@ -180,15 +188,23 @@ green, including one `harbor-apps` job per task (5 trials and 5 v3 audits each):
 
 - [run 38673823006](https://github.com/dillaryclump/democratize-security/actions/runs/38673823006) at `720fb80`;
 - [run 38674490600](https://github.com/dillaryclump/democratize-security/actions/runs/38674490600) at `5d9246c` (launcher registration);
-- [run 38674863679](https://github.com/dillaryclump/democratize-security/actions/runs/38674863679) at `8a244ad` (app `/tmp`).
+- [run 38674863679](https://github.com/dillaryclump/democratize-security/actions/runs/38674863679) at `8a244ad` (app `/tmp`);
+- [run 38745209032](https://github.com/dillaryclump/democratize-security/actions/runs/38745209032) at `8c5a56e`, the first under the namespace and uid
+  rules with the verifier as `999:999`.
+
+Runs before `8c5a56e` used earlier drafts of v3. The run at the merged head is
+the evidence of record for the final rules.
 
 ## Limits
 
 - Public development tasks with a public verifier, not a protected holdout. A
   candidate that special-cases the known requests could pass.
-- The verifier trusts the HTTP behavior it observes. Response size and time are
-  bounded only by the 5-second request timeout and Harbor's verifier deadline.
-  Interference by the candidate yields a failing or missing grade, never a pass.
+- The verifier trusts the HTTP behavior it observes. httpx's 5-second timeout
+  bounds each connect and read operation, not a whole request or a response's
+  size: only Harbor's verifier deadline and `main`'s memory limit bound those,
+  and reaching either is a verifier exception (a missing grade). Interference
+  by the candidate yields a failing or missing grade, never a pass; scoring
+  must count a missing grade as a failure.
 - The candidate app holds the restricted runtime credentials, as the reference
   design intends. Database configuration is the harness's, so
   `database_configuration` is a sanity check here, not a candidate property.

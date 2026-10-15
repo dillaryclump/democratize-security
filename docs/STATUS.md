@@ -206,6 +206,17 @@ Review fixes after the first evidence:
   All are fixed. The verifier now runs as numeric `999:999`. A local
   `invoice-read` run with these fixes passed 5/5 trials with exact outcomes
   and 5/5 audits: app uid 20001, private PID and IPC namespaces.
+- The final review round found more, all fixed:
+  - a valid `app.py` saved as 0600 was graded `invalid_submission`, so it
+    is now its own bound zero, `unreadable_submission`, and the instructions
+    ask for a readable file;
+  - no test exercised exact-check acceptance, and the starter and unsafe AST
+    tests skipped module functions, async handlers and plain statements;
+  - the app-image test missed multi-file `COPY` and `ADD`;
+  - v3 admitted the named candidate volume without an app;
+  - several docs overstated or were stale.
+
+  Mutation checks confirm the new tests fail on the defects they target.
 - The review also confirmed a pre-existing gap: Harbor moves the artifact
   through the host unchecked, so a symlink is resolved there and nothing bounds
   the size. This holds for both task families and is recorded as a limit in

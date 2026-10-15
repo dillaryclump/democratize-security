@@ -4,8 +4,11 @@ Status: M2 prerequisite, audit policy `harbor-docker-boundary-v3`. This records
 what one trusted Docker daemon actually configured for one reviewed, model-free
 Harbor 0.24.0 trial. It is not a container-escape proof and does not approve
 hostile or model-generated candidates. v3 is v2 plus rules for the application
-tasks' candidate `app` container ([APPLICATION_TASKS.md](APPLICATION_TASKS.md));
-for the policy task, which has no app, it checks exactly what v2 did.
+tasks' candidate `app` container ([APPLICATION_TASKS.md](APPLICATION_TASKS.md)).
+For the policy task, which has no app, it applies v2's rules, with one addition:
+every verifier-project container, Harbor's sidecar included, must have an
+observed start event after the agent stopped. The named candidate volume is
+admitted only when an app is observed.
 
 ## Run
 

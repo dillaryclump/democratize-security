@@ -25,6 +25,8 @@ which returns the caller's invoices as a JSON list ordered by id.
   as transaction-local PostgreSQL context, and row-level security then limits
   the restricted runtime role to that tenant's rows. Do not cache results
   across requests or connect with other credentials.
+- Keep `/candidate/app.py` a regular file that other users can read (for
+  example mode 0644): the verifier reads it as a different user.
 - Records are JSON objects
   `{"id": int, "description": str, "amount_cents": int}`. Keep the other
   endpoints, `create_app()` and the `REFERENCE_DATABASE_URL` setting unchanged.

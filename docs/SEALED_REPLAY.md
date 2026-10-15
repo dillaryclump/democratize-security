@@ -52,7 +52,8 @@ build inputs;
 The seal is now an input to replay verification, rather than only a post-hoc
 comparison. However, Harbor still collects/transfers files before host acceptance;
 this change does not make its extraction safe for arbitrary hostile workers.
-The code supports reviewed JSON policies only. Base images are digest-pinned, but
+The code supports one reviewed policy.json or one app.py per replay. Base images
+are digest-pinned, but
 apt packages remain mutable; task/verifier source hashes do not identify the
 entire runtime image.
 No dedicated-host approval, protected tests, model budget, persistence/recovery,

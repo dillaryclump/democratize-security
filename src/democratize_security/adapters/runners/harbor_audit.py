@@ -289,8 +289,10 @@ def audit(
                 declared = set(container["Config"].get("Volumes") or {})
                 binds = {}
                 for mount in container.get("Mounts") or []:
+                    # Only with an app present; otherwise v2's volume rule holds.
                     if (
                         project == verifier_project
+                        and apps()
                         and (is_main or is_app)
                         and mount["Type"] == "volume"
                         and mount.get("Name") == candidate_volume

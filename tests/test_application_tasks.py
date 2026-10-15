@@ -6,6 +6,7 @@ copied; these tests make every copy provably identical to its single source.
 
 import ast
 import json
+import os
 import re
 import runpy
 import subprocess
@@ -32,13 +33,33 @@ def files(directory):
     return sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file())
 
 
-def endpoints(source):
-    """Map each function inside create_app to its AST dump."""
+# Statements an unsafe control may add beside its endpoint, by task.
+UNSAFE_EXTRAS = {"invoice-search": ["cache = {}"]}
+
+
+def create_app(tree):
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "create_app")
+
+
+def app_module(source, *, drop=(), extras=(), docstring=True):
+    """Whole-module AST dump, minus named create_app functions and allowed extras."""
     tree = ast.parse(source)
-    create = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "create_app")
-    return {
-        node.name: ast.dump(node) for node in create.body if isinstance(node, ast.FunctionDef)
-    }, [ast.dump(n) for n in tree.body if not isinstance(n, ast.FunctionDef | ast.Expr)]
+    if not docstring:
+        tree.body = [n for n in tree.body if not isinstance(n, ast.Expr)]
+    extra = {ast.dump(ast.parse(statement).body[0]) for statement in extras}
+    create = create_app(tree)
+    create.body = [
+        node
+        for node in create.body
+        if not (isinstance(node, ast.FunctionDef) and node.name in drop)
+        and ast.dump(node) not in extra
+    ]
+    return ast.dump(tree)
+
+
+def endpoint(source, name):
+    create = create_app(ast.parse(source))
+    return next(n for n in create.body if isinstance(n, ast.FunctionDef) and n.name == name)
 
 
 def test_every_task_has_exactly_the_reviewed_files():
@@ -90,20 +111,25 @@ def test_task_configuration_is_separate_and_isolated():
 
 @pytest.mark.parametrize("name", sorted(TASKS))
 def test_starter_is_the_reference_minus_one_endpoint(name):
-    reference, reference_module = endpoints(REFERENCE.read_text())
-    starter, starter_module = endpoints((task(name) / "environment/app.py").read_text())
-    assert starter_module == reference_module
-    assert TASKS[name] in reference and TASKS[name] not in starter
-    assert starter == {k: v for k, v in reference.items() if k != TASKS[name]}
+    # Everything else, docstring, tenant(), lifespan and handlers included, is equal.
+    reference = REFERENCE.read_text()
+    starter = app_module((task(name) / "environment/app.py").read_text())
+    assert starter == app_module(reference, drop={TASKS[name]})
+    assert starter != app_module(reference)
 
 
 @pytest.mark.parametrize("name", sorted(TASKS))
 def test_unsafe_control_changes_only_its_endpoint(name):
-    reference, reference_module = endpoints(REFERENCE.read_text())
-    unsafe, unsafe_module = endpoints((ROOT / f"scripts/app_controls/{name}-unsafe.py").read_text())
-    assert unsafe_module == reference_module
-    assert set(unsafe) == set(reference)
-    assert [k for k in reference if unsafe[k] != reference[k]] == [TASKS[name]]
+    reference = REFERENCE.read_text()
+    unsafe = (ROOT / f"scripts/app_controls/{name}-unsafe.py").read_text()
+    assert app_module(
+        unsafe, drop={TASKS[name]}, extras=UNSAFE_EXTRAS.get(name, ()), docstring=False
+    ) == app_module(reference, drop={TASKS[name]}, docstring=False)
+    ours, theirs = endpoint(reference, TASKS[name]), endpoint(unsafe, TASKS[name])
+    assert [ast.dump(d) for d in theirs.decorator_list] == [
+        ast.dump(d) for d in ours.decorator_list
+    ]
+    assert ast.dump(theirs) != ast.dump(ours)
 
 
 def test_control_expectations_cover_the_protocol(apps):
@@ -136,8 +162,13 @@ def test_solutions_are_executable_by_the_unprivileged_agent():
 
 def test_app_image_holds_no_verifier_code():
     dockerfile = (task("invoice-read") / "tests/app.Dockerfile").read_text()
-    copies = re.findall(r"^COPY\s+(?:--\S+\s+)*(\S+)\s", dockerfile, re.MULTILINE)
-    assert copies == ["app-requirements.txt", "launch.py"]
+    lines = re.sub(r"\\\n", " ", dockerfile).splitlines()
+    instructions = [line.split() for line in lines if line.strip() and line.lstrip()[0] != "#"]
+    copies = [words for words in instructions if words[0].upper() in {"COPY", "ADD"}]
+    assert all(words[0].upper() == "COPY" for words in copies)
+    assert not any(word.startswith("--from") for words in copies for word in words)
+    sources = [s for words in copies for s in [w for w in words[1:] if w[:2] != "--"][:-1]]
+    assert sorted(sources) == ["app-requirements.txt", "launch.py"]
     verifier = (task("invoice-read") / "tests/Dockerfile").read_text()
     assert "app.py" not in verifier and "launch.py" not in verifier
 
@@ -242,6 +273,8 @@ def test_orchestrator_without_nonce_emits_no_reward(verifier, tmp_path):
 def test_invalid_submission_gets_a_bound_zero(verifier, apps, tmp_path, submission):
     candidate = tmp_path / "app.py"
     if submission == "symlink":
+        # Harbor may resolve a link on the host first (a documented limit);
+        # this covers the verifier's own second line of checks.
         (tmp_path / "real.py").write_text("x = 1\n")
         candidate.symlink_to(tmp_path / "real.py")
     elif submission == "directory":
@@ -320,6 +353,45 @@ def test_orchestrator_evidence_is_accepted_by_the_host(verifier, apps, tmp_path,
         apps["accept_app"](job, "oracle", expected, "f" * 64)
     with pytest.raises(ValueError):
         apps["accept_app"](job, "oracle", apps["expected_outcomes"]("invoice-read", "nop"), NONCE)
+
+
+@pytest.mark.parametrize("how", ["simulated", "mode_000"])
+def test_unreadable_submission_is_a_distinct_bound_zero(verifier, apps, tmp_path, monkeypatch, how):
+    # Harbor keeps the agent's mode bits and the verifier is another user.
+    candidate = tmp_path / "app.py"
+    candidate.write_bytes(REFERENCE.read_bytes())
+    if how == "simulated":
+
+        def unreadable(path):
+            raise PermissionError(13, "Permission denied", str(path))
+
+        monkeypatch.setattr(verifier, "read_candidate", unreadable)
+    elif os.geteuid() == 0:
+        pytest.skip("root reads files regardless of mode")
+    else:
+        candidate.chmod(0)
+    output = tmp_path / "verifier"
+    output.mkdir()
+    verifier.main(output=output, environ={"DS_NONCE": NONCE}, candidate=candidate)
+    record = evidence(output)
+    assert record["outcome"] == "unreadable_submission" and record["reward"] == 0
+    assert record["artifact_sha256"] is None
+    assert record["mac"] == apps["harbor_spike"].evidence_mac(NONCE, record)
+
+
+def test_host_requires_exact_checks_not_just_the_reward(verifier, apps, tmp_path, monkeypatch):
+    from democratize_security.verification.reference import Check, summarize
+
+    unsafe = CONTROLS["invoice-read"]["unsafe"]
+    result = summarize([Check(name, outcome) for name, outcome in sorted(unsafe.items())])
+    job, record = trial_with(verifier, tmp_path, monkeypatch, started=True, result=result)
+    assert record["reward"] == 0 and record["outcome"] == "fail"
+    # Same reward and outcome as the nop control, different checks: rejected.
+    nop = apps["expected_outcomes"]("invoice-read", "nop")
+    with pytest.raises(ValueError, match="reviewed expectation"):
+        apps["accept_app"](job, "oracle", nop, NONCE)
+    accepted = apps["accept_app"](job, "oracle", unsafe, NONCE)
+    assert accepted["checks"] == unsafe
 
 
 def test_app_that_never_starts_gets_zero(verifier, apps, tmp_path, monkeypatch):
