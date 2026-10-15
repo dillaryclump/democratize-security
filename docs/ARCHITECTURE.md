@@ -55,6 +55,11 @@ The verifier must check roles/policies, actual API response bodies and CSV conte
 
 ## Storage and lifecycle
 
+The proposed M3 [persistence/recovery contract](PERSISTENCE.md) and
+[ADR 0004](decisions/0004-persistence-recovery.md) refine the lifecycle below
+with durable dispatch intent and explicit reconciliation. They are a design
+for review, not implemented persistence or permission to execute campaigns.
+
 Git stores reviewed source, public task metadata and campaign configurations. SQLite initially stores trial identities, state transitions, reservations, usage and evidence locations. Artifacts live in a separate content-addressed directory. Private final cases live outside the repository, its history and agent images. Backups must preserve the database and artifact index together.
 
 Planned lifecycle: `planned -> preparing -> running -> sealed -> verifying -> completed`. Failures/timeouts can produce `interrupted` with explicit reason and retained evidence. A completed trial may still fail functionality or security. Restart reconciles leases with actual workers; it must never blindly create a second paid attempt. These runtime semantics are not yet implemented.

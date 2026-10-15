@@ -1,5 +1,24 @@
 # Current status and next handoff
 
+## Proposed persistence contract (2026-10-15, issue #21)
+
+Branch `design/persistence-recovery`, based on main `1124a0c`, adds the proposed
+M3 contract in PERSISTENCE.md and ADR 0004. It specifies trial/attempt/event
+identities, atomic reservations, durable artifact references, crash-window
+reconciliation and conservative handling of unknown paid-dispatch outcomes.
+No SQLite store, dispatch command, model calls or M3 completion is implemented.
+
+Validation: all five changed/new documents passed UTF-8, newline, relative-link
+and conflict-marker checks. Required local baseline commands passed: 198 tests,
+43 skips (optional dependencies/infrastructure unavailable), Ruff lint/format.
+These baseline checks do not validate an implemented recovery engine.
+
+Next bounded implementation: offline plan import and append-only event ledger
+(slice 1 in PERSISTENCE.md), with transaction/crash and duplicate-import tests.
+Keep the persistence design review separate from M2 owner acceptance. Artifact
+publication durability is independently proposed in PR #25 / issue #24.
+Preserve this handoff alongside #17/#22/#25 when reconciling shared status docs.
+
 Updated: 2026-10-15. Current work: M2 runner gate. The three application tasks run model-free under the hardened Harbor layout; see APPLICATION_TASKS.md and the latest evidence below. Owner acceptance of M2 is pending.
 
 ## Implemented
