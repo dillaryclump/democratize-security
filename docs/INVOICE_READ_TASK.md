@@ -65,3 +65,8 @@ encoding assertion): 177 tests passed, 7 Docker-only cases skipped. Dedicated
 worker and hardened Harbor checks passed separately. Local reference environment:
 161 passed, 23 infrastructure skips; core-only: 154 passed, 24 skips. Ruff and
 package build passed. These results validate reviewed application controls only.
+
+The next reviewed-control integration is implemented in INVOICE_CONTAINER.md:
+a separate application sidecar, Unix-socket communication, independent verification
+and authenticated evidence. Its live CI is the acceptance gate; it does not
+supersede the process-only harness's restrictions.

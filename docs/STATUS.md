@@ -58,3 +58,14 @@ the process-only application regressions satisfy the three-task M2 gate.
 Keep this a current snapshot. Preserve superseded observations in the history,
 not contradictory pending statements here. Record revisions, actual checks,
 skips and limitations. Never relabel historical results.
+
+## In-progress container integration
+
+The invoice-read controls now have a dedicated Harbor nop replay runner with a
+separate app container. All IP networking is disabled; database and HTTP traffic
+use narrowly shared Unix sockets. The app receives no verifier code, nonce or
+log mounts. Locked image/dependency inputs, complete HTTP/database checks and
+host-observed app-boundary checks are implemented. See INVOICE_CONTAINER.md.
+Local: 173 passed, 23 skips; Ruff and generated-task schema checks pass. Live CI
+pending. This is reviewed application replay, not general agent task generation
+or completion of the three-task M2 gate.
