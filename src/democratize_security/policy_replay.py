@@ -20,6 +20,9 @@ TRUSTED_FILES = (
     "instruction.md",
     # Reviewed container hardening; a replay must not run with weaker isolation.
     "environment/docker-compose.yaml",
+    # The trusted collector that extracts the artifact after the agent stops.
+    "environment/collect.py",
+    "environment/collector.Dockerfile",
     "tests/Dockerfile",
     "tests/docker-compose.yaml",
     "tests/test.sh",
@@ -31,6 +34,8 @@ APP_TRUSTED_FILES = (
     "task.toml",
     "instruction.md",
     "environment/docker-compose.yaml",
+    "environment/collect.py",
+    "environment/collector.Dockerfile",
     "tests/Dockerfile",
     "tests/app.Dockerfile",
     "tests/app-requirements.txt",

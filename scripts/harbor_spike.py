@@ -45,6 +45,29 @@ def run_trial(task, agent, jobs_dir, job_name):
     return nonce
 
 
+def check_staged_logs(trial):
+    """Reject a trial that staged the agent-written /logs/artifacts for the verifier.
+
+    Each task replaces Harbor's convention entry with an exclude-all one. If the
+    agent made its container refuse execs (PID exhaustion, killing its init),
+    Harbor's directory probe fails and it falls back to an unfiltered copy,
+    recorded as a file entry or a non-empty staging directory.
+    """
+    manifest = json.loads((trial / "artifacts/manifest.json").read_text())
+    entries = [
+        (e.get("destination"), e.get("type"))
+        for e in manifest
+        if e.get("source") == "/logs/artifacts"
+    ]
+    staged = trial / "artifacts/agent-artifacts"
+    if (
+        entries != [("artifacts/agent-artifacts", "directory")]
+        or os.path.islink(staged)
+        or (os.path.lexists(staged) and (not staged.is_dir() or any(staged.iterdir())))
+    ):
+        raise ValueError("agent-written /logs/artifacts was staged for the verifier")
+
+
 def accept_trial(job, agent, reward, nonce, *, evidence, artifact, keys, expected_bundle=None):
     """Shared host acceptance for one finite trial; returns (evidence, bundle).
 
@@ -70,6 +93,7 @@ def accept_trial(job, agent, reward, nonce, *, evidence, artifact, keys, expecte
     # write one, so any reward.json is foreign.
     if os.path.lexists(trial / "verifier/reward.json"):
         raise ValueError("unexpected reward.json in verifier output")
+    check_staged_logs(trial)
     sealed = seal(trial / "verifier", [evidence])["files"][0]["content_base64"]
     record = json.loads(base64.b64decode(sealed))
     if (

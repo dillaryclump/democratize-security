@@ -17,7 +17,11 @@ from democratize_security.adapters.runners.harbor_audit import (
 
 ROOT = Path(__file__).resolve().parents[1]
 TRIAL = "rls-policy__AbC123"
-LIMITS = {"agent": {"cpus": 1, "memory_mb": 256}, "verifier": {"cpus": 1, "memory_mb": 512}}
+LIMITS = {
+    "agent": {"cpus": 1, "memory_mb": 256},
+    "verifier": {"cpus": 1, "memory_mb": 512},
+    "collector": {"cpus": 1, "memory_mb": 64, "pids": 16},
+}
 EGRESS = {"control_connections": 1, "trial_connections": 0}
 PROJECT = "com.docker.compose.project"
 SECRET = "d" * 64
@@ -67,6 +71,16 @@ def container(cid, project, service, *, image, user="", memory=0, binds=(), volu
     }
 
 
+def volume_mount(name, target, *, writable):
+    return {
+        "Type": "volume",
+        "Name": name,
+        "Driver": "local",
+        "Destination": target,
+        "RW": writable,
+    }
+
+
 def event(action, cid, project, service, moment):
     # Docker events carry container labels as actor attributes.
     labels = {PROJECT: project, "com.docker.compose.service": service}
@@ -105,10 +119,35 @@ def observed(tmp_path):
     )
     verifier["HostConfig"]["CapAdd"] = ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"]
     verifier["HostConfig"]["PidsLimit"] = 128
+    # The submission is in a named volume the trusted collector reads.
+    agent_volume = f"{agent_project}_candidate"
+    agent["Mounts"] = [m for m in agent["Mounts"] if m["Destination"] != "/candidate"]
+    agent["Mounts"].append(volume_mount(agent_volume, "/candidate", writable=True))
+    collector = container(
+        "collector",
+        agent_project,
+        "collector",
+        image="sha256:" + "e" * 64,
+        user="10001:10001",
+        memory=64 * 1024 * 1024,
+        volumes=["/candidate"],
+    )
+    collector["HostConfig"].update(
+        NetworkMode="none",
+        CapAdd=None,
+        CapDrop=["ALL"],
+        SecurityOpt=["no-new-privileges:true"],
+        ReadonlyRootfs=True,
+        PidsLimit=16,
+    )
+    collector["Mounts"].append(volume_mount(agent_volume, "/agent-candidate", writable=False))
     events = [
         event("start", "as", agent_project, SIDECAR, 0),
         event("start", "agent", agent_project, "main", 1),
+        event("start", "collector", agent_project, "collector", 1),
         event("die", "agent", agent_project, "main", 2),
+        # Harbor's collect hook, after it stopped the agent's container.
+        event("exec_start: python3 -I /opt/collect.py", "collector", agent_project, "collector", 3),
         event("start", "vs", verifier_project, SIDECAR, 3),
         event("start", "verifier", verifier_project, "main", 4),
         event("die", "verifier", verifier_project, "main", 5),
@@ -116,6 +155,7 @@ def observed(tmp_path):
     containers = {
         "agent": agent,
         "agent_sidecar": container("as", agent_project, SIDECAR, image=sidecar_image),
+        "collector": collector,
         "verifier": verifier,
         "verifier_sidecar": container("vs", verifier_project, SIDECAR, image=sidecar_image),
     }
@@ -136,13 +176,14 @@ def outcomes(record):
 def test_hardened_harbor_shape_passes_with_only_harbor_owned_gaps(observed, tmp_path):
     record = run(*observed)
     assert record["outcome"] == "pass", record
-    assert record["policy"] == "harbor-docker-boundary-v3"
+    assert record["policy"] == "harbor-docker-boundary-v4"
     assert [c["id"] for c in record["checks"]] == list(REQUIRED)
     assert record["security_verdict"] == "not_evaluated"
     # Gaps that remain are Harbor's shared log mount and unenforced storage.
     assert record["observed_gaps"] == [
         "agent_can_write_verifier_log_directory",
         "agent_storage_unbounded",
+        "collector_storage_unbounded",
         "verifier_storage_unbounded",
     ]
     # Evidence carries trial-relative mount sources, never host paths.
@@ -250,7 +291,8 @@ def test_boundary_violation_fails(observed, mutation, check):
         # Harbor's default no-network: allows DNS and ICMP, so v2 rejects it.
         host["verifier"]["NetworkMode"] = "container:vs"
     elif mutation == "overlap":
-        events[2]["timeNano"] = 6
+        died = next(e for e in events if e["Action"] == "die" and e["Actor"]["ID"] == "agent")
+        died["timeNano"] = 6
     elif mutation == "restart_during_verification":
         events.append(event("start", "agent", agent["Config"]["Labels"][PROJECT], "main", 6))
     elif mutation == "restart_and_die_during_verification":
@@ -344,7 +386,9 @@ def test_unrelated_containers_are_ignored(observed):
 def test_project_names_and_declared_limits_follow_pinned_harbor():
     assert compose_project("RLS-Policy__AbC.1__env") == "rls-policy__abc-1__env"
     assert compose_project("_x") == "0_x"
-    assert declared_limits(ROOT / "tasks/harbor/rls-policy/task.toml") == LIMITS
+    # The collector's limits come from its compose declaration, not task.toml.
+    declared = declared_limits(ROOT / "tasks/harbor/rls-policy/task.toml")
+    assert declared == {role: LIMITS[role] for role in ("agent", "verifier")}
 
 
 def test_declared_exec_users_cover_task_and_steps(tmp_path):
@@ -357,7 +401,7 @@ def test_declared_exec_users_cover_task_and_steps(tmp_path):
     assert declared_exec_users(toml) == [("agent", "root"), ("verifier", 0)]
 
 
-APP_LIMITS = {**LIMITS, "app": {"cpus": 1, "memory_mb": 256}}
+APP_LIMITS = {**LIMITS, "app": {"cpus": 1, "memory_mb": 256, "pids": 64}}
 
 
 def candidate_mount(volume, *, writable):
@@ -440,6 +484,7 @@ def test_app_container_shape_passes(observed_app, tmp_path):
         ("pid_shared", "separate_environments"),
         ("ipc_shared", "separate_environments"),
         ("uts_host", "separate_environments"),
+        ("verifier_joins_app", "separate_environments"),
         ("verifier_uid", "least_privilege"),
         ("named_verifier_user", "least_privilege"),
         ("root", "least_privilege"),
@@ -500,6 +545,8 @@ def test_app_boundary_violation_fails(observed_app, mutation, check):
         host["IpcMode"] = "container:verifier"
     elif mutation == "uts_host":
         host["UTSMode"] = "host"
+    elif mutation == "verifier_joins_app":
+        containers["verifier"]["HostConfig"]["IpcMode"] = "container:app"
     elif mutation == "verifier_uid":
         app["Config"]["User"] = "999:20001"
     elif mutation == "named_verifier_user":
@@ -559,3 +606,112 @@ def test_app_without_declared_limits_is_incomplete(observed_app):
     record = run(*observed_app)
     assert outcomes(record)["declared_limits"] == "not_evaluated"
     assert record["outcome"] == "incomplete"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "check"),
+    [
+        ("bridge", "network_isolation"),
+        ("writable_agent_volume", "mount_scope"),
+        ("log_bind", "mount_scope"),
+        ("other_volume", "mount_scope"),
+        ("tmpfs", "mount_scope"),
+        ("agent_without_volume", "mount_scope"),
+        ("root", "least_privilege"),
+        ("host_uid", "least_privilege"),
+        ("cap", "least_privilege"),
+        ("new_privileges", "least_privilege"),
+        ("memory", "declared_limits"),
+        ("swap", "bounded_resources"),
+        ("writable_root", "bounded_resources"),
+        ("pid_shared", "separate_environments"),
+        ("agent_joins_collector", "separate_environments"),
+        ("shared_image", "separate_environments"),
+        ("in_verifier_project", "separate_environments"),
+        ("pids", "declared_limits"),
+        ("exec_while_agent_ran", "agent_stopped_before_verifier"),
+        ("never_exec", "agent_stopped_before_verifier"),
+        ("privileged", "no_privilege"),
+        ("nonce", "verifier_secret_withheld"),
+    ],
+)
+def test_collector_boundary_violation_fails(observed, mutation, check):
+    trial, containers, events = copy.deepcopy(observed)
+    collector, host = containers["collector"], containers["collector"]["HostConfig"]
+    if mutation == "bridge":
+        host["NetworkMode"] = "bridge"
+    elif mutation == "writable_agent_volume":
+        collector["Mounts"][-1]["RW"] = True
+    elif mutation == "log_bind":
+        collector["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": str(trial / "verifier"),
+                "Destination": "/logs/verifier",
+                "RW": False,
+            }
+        )
+    elif mutation == "other_volume":
+        collector["Mounts"][-1]["Name"] = "other__env_candidate"
+    elif mutation == "tmpfs":
+        host["Tmpfs"] = {"/tmp": "rw,noexec"}
+    elif mutation == "agent_without_volume":
+        agent = containers["agent"]
+        agent["Mounts"] = [m for m in agent["Mounts"] if m["Destination"] != "/candidate"]
+    elif mutation == "root":
+        collector["Config"]["User"] = "0:0"
+    elif mutation == "host_uid":
+        collector["Config"]["User"] = f"{HOST_UID}:{HOST_UID}"
+    elif mutation == "cap":
+        host["CapAdd"] = ["CAP_DAC_READ_SEARCH"]
+    elif mutation == "new_privileges":
+        host["SecurityOpt"] = None
+    elif mutation == "memory":
+        host["Memory"] = host["MemorySwap"] = 512 * 1024 * 1024
+    elif mutation == "swap":
+        host["MemorySwap"] = 2 * host["Memory"]
+    elif mutation == "writable_root":
+        host["ReadonlyRootfs"] = False
+    elif mutation == "pid_shared":
+        host["PidMode"] = "container:agent"
+    elif mutation == "agent_joins_collector":
+        # The reverse direction: the agent reads the collector's processes.
+        containers["agent"]["HostConfig"]["PidMode"] = "container:collector"
+    elif mutation == "pids":
+        host["PidsLimit"] = 1024
+    elif mutation == "shared_image":
+        collector["Image"] = containers["agent"]["Image"]
+    elif mutation == "in_verifier_project":
+        project = compose_project(f"{TRIAL}__verifier__trial")
+        collector["Config"]["Labels"][PROJECT] = project
+        for item in events:
+            if item["Actor"]["ID"] == "collector":
+                item["Actor"]["Attributes"][PROJECT] = project
+    elif mutation == "exec_while_agent_ran":
+        project = compose_project(f"{TRIAL}__env")
+        events.append(event("exec_start: sh", "collector", project, "collector", 1))
+    elif mutation == "never_exec":
+        events[:] = [e for e in events if not e["Action"].startswith("exec_start")]
+    elif mutation == "privileged":
+        host["Privileged"] = True
+    else:
+        collector["Config"]["Env"].append(f"DS_NONCE={SECRET}")
+    record = run(trial, containers, events)
+    assert record["outcome"] == "fail", record
+    assert outcomes(record)[check] == "fail", record
+
+
+def test_collector_without_declared_limits_is_incomplete(observed):
+    limits = {k: v for k, v in LIMITS.items() if k != "collector"}
+    record = run(*observed, limits=limits)
+    assert outcomes(record)["declared_limits"] == "not_evaluated"
+
+
+def test_collector_is_summarized(observed):
+    record = run(*observed)
+    collector = next(c for c in record["containers"] if c["role"] == "collector")
+    volume = compose_project(f"{TRIAL}__env") + "_candidate"
+    assert {(m["source"], m["target"], m["writable"]) for m in collector["mounts"]} == {
+        ("<volume>", "/candidate", True),
+        (f"<volume:{volume}>", "/agent-candidate", False),
+    }

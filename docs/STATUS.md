@@ -229,3 +229,106 @@ No model calls, spending or hostile-candidate execution are authorized. Next:
   files and bounds size before Harbor's transfer (ARCHITECTURE.md step 5);
 - owner review of the M2 evidence;
 - a dedicated worker host and an approved budget before any agent runs.
+
+## Trusted artifact collector (2026-10-15)
+
+Closed the gap the application-task review confirmed: Harbor 0.24.0 copied the
+agent's artifact path to the host and into the verifier unchecked, resolving
+symlinks on the host and streaming sparse files in full. Every Harbor task
+(policy and application) now collects its submission only through a trusted
+`collector` service in the agent's compose project (ARCHITECTURE.md runtime
+step 5, for that artifact):
+- The agent's `/candidate` is a named volume, which the collector mounts
+  read-only.
+- After Harbor stops the agent's container, a `[[verifier.collect]]` hook runs
+  `collect.py`. It requires a regular, singly linked file within the size bound
+  (checked before reading) and writes a fresh `0444` copy.
+- The only artifact entry names `service = "collector"`, so only that copy
+  moves through the host. A rejection leaves no file and is graded as a missing
+  submission.
+
+Audit policy v4 constrains the collector like a main container. From
+`exec_start` events, it requires that every exec into the collector came after
+the agent's container died. See HARBOR_AUDIT.md.
+
+Local evidence (Docker 29.8.2, cgroup v1, root host):
+- Full suite with PostgreSQL 16 and the Docker worker tests, final tree: 291
+  passed and 1 skipped (the mode-000 case cannot apply as root; CI runs it).
+  Ruff passes.
+- Policy task under v4:
+  - oracle 1 / nop 0;
+  - replays kept bundle hashes `6fb653ff…` and `34da710d…`, so collection
+    preserves the bytes;
+  - the tamper audit passed 10/10, the forgery was discarded and the genuine
+    reward was 0.
+- `invoice-read`: 9 trials, every outcome exactly as reviewed, and 9/9 v4
+  audits with the collector observed and zero egress.
+  - The symlink to a host canary directory, the 1 GiB sparse file and the FIFO
+    each ended in nonce-bound `invalid_submission`, with no collected file and
+    the canary secret in no trial output. The output tree stayed at 4.1 MB.
+  - A valid `0600` app passed every check.
+- A first local run failed in host acceptance on Harbor's list-shaped manifest.
+  This was fixed, and `accept_rejected` gained offline tests.
+
+CI [run 38752494128](https://github.com/dillaryclump/democratize-security/actions/runs/38752494128)
+at `1d7258f` passed every job on the GitHub runner (uid 1001, cgroup v2). Each
+`harbor-apps` job ran all nine trials, including the hostile extraction
+controls, with nine passing v4 audits.
+
+An adversarial review (three reviewers, each finding challenged by a skeptic)
+found no way through the collector to unchecked bytes, host data or a pass. It
+confirmed the following, all now fixed:
+- v4 checked namespace sharing only from the collector or app side; it now
+  checks both directions.
+- A hostile control could pass if its script failed before creating its
+  object; each script now checks its object and prints a marker that
+  acceptance requires, alongside Harbor's exit code.
+- No test caught a dropped `O_NOFOLLOW`; a test now links to a small valid
+  file.
+- The audit only checked that a PID limit was set; it now compares app and
+  collector PID limits with their declarations.
+- Several docs claimed runtime step 5 without scoping it, or were stale.
+
+A local re-run with these fixes passed the v4 tamper audit and `invoice-read`'s
+nine trials and nine audits, each hostile script confirming its object was in
+place.
+
+The review also confirmed that Harbor itself re-uploads the agent's
+bind-mounted `/logs/artifacts` directory into the verifier unchecked. Each task
+now replaces that convention entry with an explicit one (`exclude = ["*"]` and
+a fresh `destination`). Harbor then tars nothing into the agent's `/tmp`
+tmpfs, cannot copy that archive out, and stages at most an empty directory. A
+tenth control per task (`logs`) leaves a 1 GiB sparse file, a canary link, a
+FIFO and a mode-000 file there next to a valid app. Locally it passed with
+reward 1 and an empty staging directory, while the hostile files stayed in the
+agent's host bind mount; all 10 audits passed, and the policy-task tamper audit
+and replay hashes were unchanged.
+
+A follow-up review (reviewer and skeptic agreeing) showed that the exclusion
+holds only while the agent's container accepts execs. If the agent exhausts its
+PIDs or kills its init, Harbor's directory probe fails and it falls back to an
+unfiltered copy, which no task setting can prevent. Host acceptance
+(`check_staged_logs`) now rejects every trial, in both task families, whose
+manifest or staging directory shows that. An eleventh control
+(`logs-fallback`) kills its own container's init after leaving a small file,
+and must show both the forced copy and the rejection. Locally it did both:
+Harbor's manifest recorded `/logs/artifacts` as a `file` entry with status `ok`,
+the agent's file was staged, and Harbor itself still graded reward 1 with no
+exception, which host acceptance rejected. The other ten `invoice-read` trials
+behaved as reviewed, 11/11 audits passed with zero egress, and the policy-task
+replays and tamper audit passed with the check applied.
+
+CI [run 38795922164](https://github.com/dillaryclump/democratize-security/actions/runs/38795922164)
+at `e546181`, the final code of this change, passed every job on the GitHub
+runner (uid 1001, cgroup v2). Each `harbor-apps` job ran all eleven trials,
+including the `logs` control with its mode-000 file and the forced fallback,
+with eleven passing v4 audits. This run is the evidence of record.
+
+Remaining limit: the fallback copy and the agent's direct writes use host
+storage before anything can reject them. Nothing reads that directory, so the
+impact is availability, bounded only by the host.
+
+No model calls, spending or hostile-candidate execution are authorized. Next:
+- per-trial storage quotas on a dedicated worker host;
+- owner review of the M2 evidence;
+- an approved budget before any agent runs.

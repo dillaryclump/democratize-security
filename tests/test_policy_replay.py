@@ -28,6 +28,8 @@ def test_replay_uses_sealed_bytes_after_source_changes(tmp_path):
     assert (task / "environment/policy.json").read_bytes() == original
     assert sorted(p.name for p in (task / "environment").iterdir()) == [
         "Dockerfile",
+        "collect.py",
+        "collector.Dockerfile",
         "docker-compose.yaml",
         "policy.json",
     ]

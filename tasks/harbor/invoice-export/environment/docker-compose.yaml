@@ -19,3 +19,29 @@ services:
     pids_limit: 64
     # Harbor exports MEMORY and sets mem_limit from task.toml; no extra swap.
     memswap_limit: ${MEMORY:?Harbor must export MEMORY}
+    # The submission lives in a named volume so the collector can read it.
+    volumes:
+      - candidate:/candidate
+  # Trusted collector. After Harbor stops main, a [[verifier.collect]] hook
+  # copies the one allowlisted artifact here as a checked regular file; only
+  # that copy leaves the agent environment. It runs as the agent's uid so it
+  # can read what the agent wrote, but sees the agent's files read-only.
+  collector:
+    build:
+      context: .
+      dockerfile: collector.Dockerfile
+    network_mode: "none"
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 16
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 1
+    volumes:
+      - candidate:/agent-candidate:ro
+    command: ["sleep", "infinity"]
+volumes:
+  candidate:

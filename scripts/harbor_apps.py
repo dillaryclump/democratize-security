@@ -6,15 +6,23 @@ For each requested task (default: all three), under trusted host observation:
 - `nop`: the unmodified starter must fail exactly its expected checks;
 - `unsafe`: a reviewed insecure variant must fail exactly its security checks;
 - replays of the sealed oracle and unsafe artifacts, built only from those bytes
-  plus the trusted task files, must reproduce the same outcomes.
+  plus the trusted task files, must reproduce the same outcomes;
+- hostile extraction controls leave a symlink to a host canary directory, a
+  1 GiB sparse file or a FIFO at the artifact path. The trusted collector must
+  reject each one, so nothing is collected and the verifier grades a bound zero.
+  A valid app saved as 0600 must still pass, as must a valid app whose agent
+  also left a sparse file, a link to the canary, a FIFO and an unreadable file
+  in /logs/artifacts, none of which may be staged for the verifier.
 
 Every trial must also pass the host-observed boundary audit, with no host
-listener connection during the whole run. Five finite trials per task, no retries.
+listener connection during the whole run. Eleven finite trials per task, no retries.
 """
 
+import base64
 import json
 import os
-import re
+import secrets
+import shlex
 import shutil
 import sys
 
@@ -26,7 +34,7 @@ from democratize_security.adapters.runners.harbor_audit import (
     declared_exec_users,
     declared_limits,
 )
-from democratize_security.artifacts import load, write_new
+from democratize_security.artifacts import load, seal, write_new
 from democratize_security.policy_replay import (
     APP_TRUSTED_FILES,
     prepare_replay,
@@ -53,6 +61,45 @@ EVIDENCE_KEYS = {
     "schema_version",
 }
 MAX_APP_BYTES = 65536
+# Reviewed hostile solutions; {canary} is a host directory absent from the agent.
+# Each checks that its object is really in place, so a control cannot pass
+# merely because the script failed before creating it.
+EXTRACTION = {
+    "symlink": (
+        "rm -f /candidate/app.py\nln -s {canary} /candidate/app.py\ntest -L /candidate/app.py"
+    ),
+    "sparse": (
+        'truncate -s 1G /candidate/app.py\ntest "$(stat -c %s /candidate/app.py)" -eq 1073741824'
+    ),
+    "fifo": "rm -f /candidate/app.py\nmkfifo /candidate/app.py\ntest -p /candidate/app.py",
+}
+# A valid reference app saved as 0600, which the verifier user could not read.
+PRIVATE = (
+    "rm -f /candidate/app.py\ninstall -m 600 /solution/app.py /candidate/app.py\n"
+    'test "$(stat -c %a /candidate/app.py)" = 600'
+)
+# A valid app plus hostile files in the agent-written /logs/artifacts bind
+# mount, which Harbor would otherwise copy into the verifier unchecked.
+LOGS = (
+    "truncate -s 1G /logs/artifacts/sparse\n"
+    "ln -s {canary} /logs/artifacts/link\n"
+    "mkfifo /logs/artifacts/fifo\n"
+    "install -m 000 /dev/null /logs/artifacts/unreadable\n"
+    # Separate lines: under set -e a failure before && would not stop the script.
+    "test -p /logs/artifacts/fifo\n"
+    "test -L /logs/artifacts/link\n"
+    "cp /solution/app.py /candidate/app.py"
+)
+# Makes the agent's own container refuse Harbor's later execs by killing its
+# init, forcing Harbor's unfiltered fallback copy of /logs/artifacts; host
+# acceptance must detect it. The file is small: no disk is spent proving it.
+FALLBACK = (
+    "printf 'staged by fallback\\n' > /logs/artifacts/fallback.txt\n"
+    "cp /solution/app.py /candidate/app.py\n"
+    "echo '{marker}'\n"
+    "kill -TERM 1"
+)
+MARKER = "extraction control in place"
 
 
 def expected_outcomes(task, control):
@@ -104,15 +151,83 @@ def prepare_control(task, destination, app):
     (destination / "solution/app.py").write_bytes(app)
 
 
-def app_limits(compose):
-    """The app service's declared limits, read from the trusted verifier compose."""
-    import yaml
+def prepare_extraction(task, destination, script, *, marker=True):
+    """Copy the trusted task with the reference app and a reviewed hostile solve.sh."""
+    prepare_control(task, destination, (task / "solution/app.py").read_bytes())
+    solve = destination / "solution/solve.sh"
+    ending = f"echo '{MARKER}'\n" if marker else ""
+    solve.write_text(f"#!/bin/sh\nset -eu\n{script}\n{ending}")
+    solve.chmod(0o755)
 
-    app = yaml.safe_load(compose.read_text())["services"]["app"]
-    memory = re.fullmatch(r"(\d+)m", str(app["mem_limit"]))
-    if not memory or app["memswap_limit"] != app["mem_limit"]:
-        raise ValueError("app memory must be declared in MiB without swap")
-    return {"cpus": app["cpus"], "memory_mb": int(memory.group(1))}
+
+def accept_rejected(job, nonce, secret):
+    """A hostile artifact must yield a bound zero with nothing collected or copied."""
+    results = list(job.glob("*/result.json"))
+    if len(results) != 1:
+        raise ValueError("expected exactly one trial result")
+    trial = results[0].parent
+    result = json.loads(results[0].read_text())
+    if (
+        result.get("exception_info") is not None
+        or result.get("verifier_environment_mode") != "separate"
+        or result.get("verifier_result", {}).get("rewards") != {"reward": 0}
+        or os.path.lexists(trial / "verifier/reward.json")
+    ):
+        raise ValueError("hostile artifact did not end in a clean zero")
+    # Harbor records a failing solve.sh; the marker proves the object existed.
+    log = seal(trial / "agent", ["oracle.txt"])["files"][0]["content_base64"]
+    if os.path.lexists(trial / "agent/exit-code.txt") or MARKER not in base64.b64decode(log).decode(
+        errors="replace"
+    ):
+        raise ValueError("hostile solution did not put its artifact in place")
+    if os.path.lexists(trial / "artifacts/app.py"):
+        raise ValueError("collector let a rejected artifact through")
+    harbor_spike.check_staged_logs(trial)
+    # Harbor 0.24.0 writes the collection manifest as a list of entries.
+    manifest = json.loads((trial / "artifacts/manifest.json").read_text())
+    entries = [e for e in manifest if e.get("source") == "/candidate/app.py"]
+    if [(e["service"], e["status"]) for e in entries] != [("collector", "failed")]:
+        raise ValueError("artifact was not collected only through the collector")
+    sealed = seal(trial / "verifier", ["app-evidence.json"])["files"][0]["content_base64"]
+    evidence = json.loads(base64.b64decode(sealed))
+    if (
+        set(evidence) != {*EVIDENCE_KEYS, "mac"}
+        or evidence["mac"] != harbor_spike.evidence_mac(nonce, evidence)
+        or (evidence["outcome"], evidence["reward"], evidence["artifact_sha256"])
+        != ("invalid_submission", 0, None)
+    ):
+        raise ValueError("verifier did not bind a missing submission")
+    # Without the collector, Harbor would have copied the canary directory.
+    for path in trial.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            with path.open("rb") as stream:
+                if secret in stream.read(16 * 1024 * 1024):
+                    raise ValueError("host canary reached the trial outputs")
+    return {"outcome": evidence["outcome"], "reward": 0, "collected": False}
+
+
+def accept_logs(job):
+    """Nothing the agent wrote to /logs/artifacts may be staged for the verifier."""
+    trials = [path.parent for path in job.glob("*/result.json")]
+    if len(trials) != 1:
+        raise ValueError("expected exactly one trial result")
+    harbor_spike.check_staged_logs(trials[0])
+    return "nothing staged"
+
+
+def detect_fallback(job):
+    """The fallback control must really force the copy, and acceptance must catch it."""
+    trials = [path.parent for path in job.glob("*/result.json")]
+    if len(trials) != 1:
+        raise ValueError("expected exactly one trial result")
+    staged = trials[0] / "artifacts/agent-artifacts"
+    if not (staged / "fallback.txt").is_file() or (staged / "fallback.txt").is_symlink():
+        raise ValueError("fallback control did not force Harbor's unfiltered copy")
+    try:
+        harbor_spike.check_staged_logs(trials[0])
+    except ValueError:
+        return "fallback staged and rejected"
+    raise ValueError("acceptance missed a staged /logs/artifacts")
 
 
 def run_task(name, trials):
@@ -155,7 +270,30 @@ def run_task(name, trials):
         record = record_replay(bundle, manifest, result, kind="sealed_app_replay")
         write_record(output / f"evidence-{control}.json", record)
         replays.append(record)
-    return {"task": name, "controls": results, "replays": replays}
+    canary = output / "canary"
+    canary.mkdir()
+    secret = secrets.token_hex(16).encode()
+    (canary / "secret.txt").write_bytes(secret)
+    extraction = {}
+    for control, script in EXTRACTION.items():
+        hostile = output / f"task-{control}"
+        prepare_extraction(task, hostile, script.format(canary=shlex.quote(str(canary.resolve()))))
+        nonce = harbor_spike.run_trial(hostile, "oracle", output, control)
+        trials.append((output / control, hostile, nonce))
+        extraction[control] = accept_rejected(output / control, nonce, secret)
+    private = output / "task-private"
+    prepare_extraction(task, private, PRIVATE)
+    extraction["private"] = trial("oracle", private, "oracle", "private")
+    logs = output / "task-logs"
+    prepare_extraction(task, logs, LOGS.format(canary=shlex.quote(str(canary.resolve()))))
+    extraction["logs"] = trial("oracle", logs, "oracle", "logs")
+    extraction["logs"]["verifier_logs_artifacts"] = accept_logs(output / "logs")
+    fallback = output / "task-logs-fallback"
+    prepare_extraction(task, fallback, FALLBACK.format(marker=MARKER), marker=False)
+    nonce = harbor_spike.run_trial(fallback, "oracle", output, "logs-fallback")
+    trials.append((output / "logs-fallback", fallback, nonce))
+    extraction["logs-fallback"] = detect_fallback(output / "logs-fallback")
+    return {"task": name, "controls": results, "replays": replays, "extraction": extraction}
 
 
 def main(names):
@@ -182,7 +320,10 @@ def main(names):
         if len(found) != 1:
             raise ValueError("expected exactly one trial result")
         limits = declared_limits(task_dir / "task.toml")
-        limits["app"] = app_limits(task_dir / "tests/docker-compose.yaml")
+        limits["app"] = harbor_audit.service_limits(task_dir / "tests/docker-compose.yaml", "app")
+        limits["collector"] = harbor_audit.service_limits(
+            task_dir / "environment/docker-compose.yaml", "collector"
+        )
         audits.append(
             audit(
                 found[0].name,

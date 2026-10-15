@@ -21,12 +21,27 @@ def sign(trial, evidence, nonce=NONCE):
     return evidence
 
 
+# Harbor's record of the exclude-all /logs/artifacts entry: nothing staged.
+STAGED_LOGS = {
+    "source": "/logs/artifacts",
+    "destination": "artifacts/agent-artifacts",
+    "type": "directory",
+    "status": "failed",
+    "service": None,
+}
+
+
+def write_manifest(trial, entry=STAGED_LOGS):
+    (trial / "artifacts/manifest.json").write_text(json.dumps([entry]))
+
+
 def fixture(tmp_path):
     trial = tmp_path / "trial"
     (trial / "verifier").mkdir(parents=True)
     (trial / "artifacts").mkdir()
     raw = b'{"enabled":true,"predicate":"tenant"}'
     (trial / "artifacts/policy.json").write_bytes(raw)
+    write_manifest(trial)
     result = {
         "exception_info": None,
         "verifier_environment_mode": "separate",
@@ -65,6 +80,9 @@ def test_accept_seals_matching_input(tmp_path):
         "planted_reward_json",
         "evidence_reward",
         "evidence_symlink",
+        "logs_fallback_file",
+        "logs_staged",
+        "logs_no_entry",
     ],
 )
 def test_reject_incomplete_or_unbound_result(tmp_path, mutation):
@@ -93,6 +111,14 @@ def test_reject_incomplete_or_unbound_result(tmp_path, mutation):
         (trial / "verifier/reward.json").write_text('{"reward": 1}')
     elif mutation == "evidence_reward":
         sign(trial, {**evidence, "reward": 0})
+    elif mutation == "logs_fallback_file":
+        # Harbor's file-branch fallback: an unfiltered copy of the directory.
+        write_manifest(trial, {**STAGED_LOGS, "type": "file", "status": "ok"})
+    elif mutation == "logs_staged":
+        (trial / "artifacts/agent-artifacts").mkdir()
+        (trial / "artifacts/agent-artifacts/x").write_text("agent data")
+    elif mutation == "logs_no_entry":
+        (trial / "artifacts/manifest.json").write_text("[]")
     else:
         (trial / "verifier/policy-evidence.json").rename(trial / "real-evidence.json")
         (trial / "verifier/policy-evidence.json").symlink_to(trial / "real-evidence.json")
