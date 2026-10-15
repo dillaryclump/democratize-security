@@ -153,7 +153,24 @@ Then copy both files to the other tasks and to each `environment/`.
 
 ## Observed results
 
-Results pending; see STATUS.md.
+Local, Docker 29.8.2 on cgroup v1 as root, all three tasks. Images were built
+with an uncommitted patch that lets pip trust this sandbox's TLS-intercepting
+proxy; nothing else differed from the committed files.
+
+| | read | search | export |
+| --- | --- | --- | --- |
+| oracle / nop / unsafe reward | 1 / 0 / 0 | 1 / 0 / 0 | 1 / 0 / 0 |
+| Per-check outcomes as reviewed | yes | yes | yes |
+| Oracle and unsafe replays reproduce sealed hash and outcomes | yes | yes | yes |
+| v3 audits passed | 5/5 | 5/5 | 5/5 |
+
+All oracle artifacts hash to the same bundle (the reference app), as expected.
+Every audit recorded four gaps: `agent_can_write_verifier_log_directory`, and
+storage unbounded for agent, verifier and app. The app was observed in the
+verifier's namespace, with only the read-only candidate volume. The positive
+control reached the host listener and no trial connection did.
+
+CI evidence is pending; record the run here once it is green.
 
 ## Limits
 

@@ -200,9 +200,16 @@ def main(names):
     for name in names:
         write_record(OUTPUT / name / "summary.json", summary)
     print(json.dumps(summary, indent=2))
-    failed = [record["trial_name"] for record in audits if record["outcome"] != "pass"]
+    # Policy v3 applies its app rules only to observed app containers, so an
+    # application trial must also show exactly one.
+    failed = [
+        record["trial_name"]
+        for record in audits
+        if record["outcome"] != "pass"
+        or [c["role"] for c in record["containers"]].count("app") != 1
+    ]
     if failed:
-        raise ValueError(f"observed container boundary did not pass the audit: {failed}")
+        raise ValueError(f"no passing audit with exactly one app container: {failed}")
 
 
 if __name__ == "__main__":
