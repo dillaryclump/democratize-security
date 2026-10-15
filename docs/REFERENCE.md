@@ -1,6 +1,6 @@
 # Synthetic reference and public verifier
 
-## Concrete contract v2
+## Concrete contract (protocol v3)
 
 This implementation makes M0 assumptions reviewable. It does not claim Dillon has approved a production identity design. Alice belongs to org-a; Bob belongs to org-b; an unassigned identity has no membership. Fixed bearer strings `fixture-alice`, `fixture-bob` and `fixture-unassigned` are PUBLIC TEST FIXTURES, not secrets or deployable authentication. Server-owned mappings choose the tenant; tenant headers and query parameters never do.
 
@@ -16,11 +16,11 @@ Database and pool errors return a fixed 503 JSON response without SQL or connect
 
 ## What the verifier proves and does not prove
 
-`verification/reference.py` imports no application code. It calls HTTP and independently audits the provided runtime database identity. It knows expected synthetic records separately from the app. Eight required check groups cover database configuration, authorized reads, foreign reads, list/search/pagination, CSV, identity, spoofing and repeated tenant switching.
+`verification/reference.py` imports no application code. It calls HTTP and independently audits the provided runtime database identity. It knows expected synthetic records separately from the app. Eight required check groups cover database configuration, authorized reads, foreign reads, list/search/pagination, CSV, identity, spoofing and repeated tenant switching. Spoofing sends tenant hints (`X-Tenant-ID`, `X-Organization-ID`, `?tenant_id=`, `?organization=`) as headers, query parameters and both, for both tenants, to the read, list and export endpoints.
 
 Every required check must run exactly once and return pass before aggregate pass. Missing, duplicate, unknown or interrupted checks yield incomplete. An all-empty success response fails authorized behavior. Database/transport errors do not become security passes. The CLI emits structured JSON and returns nonzero on fail/incomplete; it does not print connection errors that could expose DSNs.
 
-This is a PUBLIC DEVELOPMENT ORACLE, not a hidden final evaluator. Its configuration check relies on the trusted harness supplying the same runtime DSN as the app. It cannot independently prove that an arbitrary remote app uses that DSN. There is no sealed-artifact binding, protected worker or hostile-code isolation yet. The harness runs reviewed repository reference code in a separate process with a minimal environment, not arbitrary generated workloads. Do not call this M2 isolation.
+This is a PUBLIC DEVELOPMENT ORACLE, not a hidden final evaluator. Its configuration check relies on the trusted harness supplying the same runtime DSN as the app. It cannot independently prove that an arbitrary remote app uses that DSN. The integration tests here run reviewed repository code in a separate process with a minimal environment, not arbitrary generated workloads, and are not M2 isolation. The three Harbor application tasks run this same module, byte-identical, inside a separate verifier with sealed-artifact binding and a confined candidate container; see APPLICATION_TASKS.md.
 
 ## Reproduce with real PostgreSQL
 
@@ -38,7 +38,7 @@ docker stop ds-reference-pg
 
 Wait for PostgreSQL readiness before running tests (`docker exec ds-reference-pg pg_isready`). GitHub CI does this using a service health check. Container tags are development conveniences; record immutable worker digests before experiments.
 
-Each integration test creates fresh synthetic data and an unpredictable restricted role/password, starts the reference on loopback, runs verification and removes its database/role in cleanup. The app receives only the runtime DSN, not setup credentials. The fixture data and schema live in `tests/integration/conftest.py`; they are not a production migration system.
+Each integration test creates fresh synthetic data and an unpredictable restricted role/password, starts the reference on loopback, runs verification and removes its database/role in cleanup. The app receives only the runtime DSN, not setup credentials. The schema, rows, grants and policy live in `verification/fixture.py`, shared byte-for-byte with the Harbor application verifiers; the database is created as UTF-8 with the C locale so cluster defaults cannot change exported values. They are not a production migration system.
 
 To verify an already configured fixed-fixture instance:
 
@@ -71,10 +71,12 @@ GitHub Actions run [38466115426](https://github.com/dillaryclump/democratize-sec
 
 ## Next bounded work
 
-The v2 identity/recovery checks passed real PostgreSQL CI. Externalize schema/fixture provisioning only if needed for a usable demonstration. Review M0 defaults with Dillon. M2 then proves sealed-artifact verification and protected worker separation with three actual tasks. Do not enable model calls, final grading or automated search based on these fixture tests alone.
+The three application tasks in APPLICATION_TASKS.md now use this verifier. Review M0 defaults with Dillon. Do not enable model calls, final grading or automated search based on these fixture tests alone.
 
 ## Protocol revision history
 
 `synthetic-reference-v2` adds malformed/ambiguous authentication cases to the required identity check. v1 evidence remains tied to its original revision; the stronger v2 checks are not retroactively attributed to v1. HTTP failure injection and concurrency are harness integration tests, not new required groups in the standalone read-only verifier.
 
 V2 evidence: [CI run 38477380739](https://github.com/dillaryclump/democratize-security/actions/runs/38477380739) passed all 48 tests with no skips in 8.82 seconds, including real HTTP database-error recovery and concurrent tenant requests. Both Python matrix jobs passed.
+
+`synthetic-reference-v3` (2026-10-15) widens the required spoofing check from one list request to the read, list and export endpoints, for both tenants, with tenant hints in headers, query parameters and both. It was added for the application tasks, whose reviewed unsafe controls trust such hints. Provisioning moved to `verification/fixture.py` and now pins the database encoding. Earlier evidence stays attributed to v2. `tests/integration/test_app_tasks.py` grades every task starter, oracle and unsafe control against real PostgreSQL and requires the exact per-check outcomes in `scripts/app_controls/expected.json`.

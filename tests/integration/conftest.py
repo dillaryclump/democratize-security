@@ -24,57 +24,17 @@ def database():
     from psycopg import sql
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+    from democratize_security.verification.fixture import provision
+
     name = "ds_test_" + uuid.uuid4().hex
     role = name + "_runtime"
     password = secrets.token_hex(24)
     admin = psycopg.connect(dsn, autocommit=True, connect_timeout=5)
     try:
-        admin.execute(
-            sql.SQL(
-                "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOBYPASSRLS "
-                "NOCREATEDB NOCREATEROLE NOREPLICATION"
-            ).format(sql.Identifier(role), sql.Literal(password))
-        )
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        settings = conninfo_to_dict(dsn)
-        settings["dbname"] = name
-        setup_dsn = make_conninfo(**settings)
+        setup_dsn = provision(dsn, name, role, password)
+        settings = conninfo_to_dict(setup_dsn)
         settings.update(user=role, password=password)
         runtime_dsn = make_conninfo(**settings)
-        with psycopg.connect(setup_dsn, autocommit=True) as setup:
-            setup.execute(
-                sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(name))
-            )
-            setup.execute(
-                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-                    sql.Identifier(name), sql.Identifier(role)
-                )
-            )
-            setup.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
-            setup.execute(
-                sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(role))
-            )
-            setup.execute("""
-                CREATE TABLE public.invoices (
-                    id integer PRIMARY KEY, tenant_id text NOT NULL,
-                    description text NOT NULL,
-                    amount_cents integer NOT NULL CHECK (amount_cents >= 0)
-                );
-                INSERT INTO public.invoices VALUES
-                    (1, 'org-a', 'A consulting', 1200), (2, 'org-a', 'A support', 3400),
-                    (3, 'org-b', 'B consulting', 5600), (4, 'org-b', 'B support', 7800);
-                ALTER TABLE public.invoices ENABLE ROW LEVEL SECURITY;
-                ALTER TABLE public.invoices FORCE ROW LEVEL SECURITY;
-            """)
-            setup.execute(
-                sql.SQL("GRANT SELECT ON public.invoices TO {}").format(sql.Identifier(role))
-            )
-            setup.execute(
-                sql.SQL("""
-                CREATE POLICY tenant_read ON public.invoices FOR SELECT TO {}
-                USING (tenant_id = nullif(current_setting('app.tenant_id', true), ''))
-            """).format(sql.Identifier(role))
-            )
         yield SimpleNamespace(admin=setup_dsn, runtime=runtime_dsn, role=role)
     finally:
         # Only this fixture's random database/role is targeted.
@@ -88,9 +48,16 @@ def database():
 @pytest.fixture
 def serve(tmp_path):
     @contextmanager
-    def start(runtime_dsn):
+    def start(runtime_dsn, app_file=None):
         import httpx
 
+        target = ["democratize_security.reference.app:create_app"]
+        if app_file is not None:
+            # A task starter, oracle or reviewed control, loaded from a fresh copy.
+            directory = tmp_path / uuid.uuid4().hex
+            directory.mkdir()
+            (directory / "app.py").write_bytes(app_file.read_bytes())
+            target = ["app:create_app", "--app-dir", str(directory)]
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
@@ -102,7 +69,7 @@ def serve(tmp_path):
                     sys.executable,
                     "-m",
                     "uvicorn",
-                    "democratize_security.reference.app:create_app",
+                    *target,
                     "--factory",
                     "--host",
                     "127.0.0.1",

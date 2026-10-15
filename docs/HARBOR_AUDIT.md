@@ -1,9 +1,11 @@
 # Harbor worker boundary audit
 
-Status: M2 prerequisite, audit policy `harbor-docker-boundary-v2`. This records
+Status: M2 prerequisite, audit policy `harbor-docker-boundary-v3`. This records
 what one trusted Docker daemon actually configured for one reviewed, model-free
 Harbor 0.24.0 trial. It is not a container-escape proof and does not approve
-hostile or model-generated candidates.
+hostile or model-generated candidates. v3 is v2 plus rules for the application
+tasks' candidate `app` container ([APPLICATION_TASKS.md](APPLICATION_TASKS.md));
+for the policy task, which has no app, it checks exactly what v2 did.
 
 ## Run
 
@@ -50,16 +52,16 @@ Acceptance requires all of:
 
 | Check | Requirement |
 | --- | --- |
-| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides, different images; every started trial container was inspected |
-| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before the verifier's first `start` |
+| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus, in the verifier project only, at most one `app`; agent, verifier and app images all differ; every started trial container was inspected |
+| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts |
 | `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
-| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag |
-| `declared_limits` | Memory and CPU equal `task.toml` |
-| `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace) |
+| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write; no other named volume anywhere |
+| `declared_limits` | Memory and CPU equal `task.toml`; v3: the app's equal its compose declaration (missing declaration is incomplete) |
+| `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace); v3: the app joins only the verifier main's namespace (`container:<main id>`), so it has loopback only |
 | `no_observed_egress` | Positive control observed; no trial connection reached the host |
-| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER`; the last `no-new-privileges` option is true; the agent has an explicit `uid:gid` different from the controller's; task.toml sets no exec user |
-| `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem |
-| `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration |
+| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app none; the last `no-new-privileges` option is true; the agent and app have explicit `uid:gid` users different from the controller's; task.toml sets no exec user |
+| `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem, for main containers and the app |
+| `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration, the app's included |
 
 Missing containers, events, the positive control or the nonce yield
 `incomplete`, never pass. Evidence stores trial-relative mount sources, not host
@@ -158,8 +160,15 @@ disposable host. Project names mirror Harbor 0.24.0 sanitization and must be
 re-reviewed on upgrade. Model-generated candidates additionally need a dedicated
 worker host and an approved budget.
 
+## Application tasks
+
+`scripts/harbor_apps.py` audits every trial it runs (oracle, nop, unsafe and both
+replays, per task) under v3, with one positive control and one host listener for
+the whole run, and fails unless all pass with zero trial connections. App limits
+come from the trusted verifier compose file. The candidate app adds one gap,
+`app_storage_unbounded`. Results are in APPLICATION_TASKS.md.
+
 ## Next bounded task
 
-Adapt the three application development tasks (read, list/search, export) to
-this hardened layout with the independent HTTP/database verifier. Keep this
-audit and the sealed replay as regressions.
+Keep this audit and the sealed replays as regressions. Model-generated
+candidates still need a dedicated worker host and an approved budget.

@@ -27,7 +27,7 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | CLI | `src/democratize_security/cli.py` | Implemented `validate`, `plan`, `seal` and `inspect-artifact`; no execution CLI |
 | Controller | future `controller/` within Python package | Reserve budgets, schedule finite trials, persist transitions; never import workload code |
 | Store | future `store/` | SQLite metadata, append-only events and content-addressed artifacts; backup/recovery |
-| Runner adapters | `adapters/runners/` | Harbor first; current reviewed-data spike is `scripts/harbor_spike.py`, not a production adapter. The stdlib Harbor boundary audit lives in `adapters/runners/harbor_audit.py`; the core must not import it. See HARBOR.md and HARBOR_AUDIT.md |
+| Runner adapters | `adapters/runners/` | Harbor first; current reviewed-data spike is `scripts/harbor_spike.py`, not a production adapter. The stdlib Harbor boundary audit lives in `adapters/runners/harbor_audit.py`; the core must not import it. `scripts/harbor_apps.py` runs the three application tasks in `tasks/harbor/invoice-*`. See HARBOR.md, HARBOR_AUDIT.md and APPLICATION_TASKS.md |
 | Benchmark adapters | future `adapters/benchmarks/` | Prepare/inject/extract/normalize; preserve original scoring and task provenance |
 | Proposer adapters | future `adapters/proposers/` | Manual candidate initially, GEPA later; development feedback only |
 | Security integration | `candidates/` | Prompts/templates/helpers/policies that the product ships; cannot define authoritative grades |

@@ -1,0 +1,25 @@
+schema_version = "1.4"
+artifacts = [{ source = "/candidate/app.py", destination = "app.py" }]
+
+[task]
+name = "democratize-security/invoice-search"
+version = "0.1.0"
+
+[agent]
+timeout_sec = 900
+
+[environment]
+cpus = 1
+memory_mb = 512
+storage_mb = 1024
+network_mode = "no-network"
+
+[verifier]
+timeout_sec = 300
+environment_mode = "separate"
+
+[verifier.environment]
+cpus = 1
+memory_mb = 1024
+storage_mb = 2048
+network_mode = "no-network"

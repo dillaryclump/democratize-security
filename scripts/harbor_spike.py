@@ -14,13 +14,15 @@ from democratize_security.artifacts import seal, validate, write_new
 ROOT = Path(__file__).resolve().parents[1]
 TASK = ROOT / "tasks/harbor/rls-policy"
 CHECKS = {"authorized_a", "authorized_b", "missing_context_denied", "rls_enabled"}
+EVIDENCE_KEYS = {"artifact_sha256", "checks", "reward", "schema_version"}
 # Must not match Harbor's secret-name pattern, or Harbor redacts it in evidence.
 NONCE = "DS_NONCE"
 
 
 def evidence_mac(nonce, evidence):
-    # Mirrors the verifier's check.py, which cannot import project code.
-    payload = {k: evidence[k] for k in ("artifact_sha256", "checks", "reward", "schema_version")}
+    # Mirrors the verifiers' check.py and run.py, which cannot import project
+    # code: the MAC covers every evidence field except itself.
+    payload = {k: v for k, v in evidence.items() if k != "mac"}
     data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hmac.new(nonce.encode(), data, hashlib.sha256).hexdigest()
 
@@ -43,7 +45,12 @@ def run_trial(task, agent, jobs_dir, job_name):
     return nonce
 
 
-def accept_result(job, agent, expected, nonce, *, expected_bundle=None):
+def accept_trial(job, agent, reward, nonce, *, evidence, artifact, keys, expected_bundle=None):
+    """Shared host acceptance for one finite trial; returns (evidence, bundle).
+
+    Requires one clean separate-verifier trial whose evidence, bound to this
+    run's nonce, agrees with Harbor's reward and covers the collected bytes.
+    """
     if expected_bundle is not None:
         validate(expected_bundle)
     results = list(job.glob("*/result.json"))
@@ -56,36 +63,54 @@ def accept_result(job, agent, expected, nonce, *, expected_bundle=None):
         or result.get("verifier_environment_mode") != "separate"
         or result.get("agent_info", {}).get("name") != agent
         or not result.get("finished_at")
-        or result.get("verifier_result", {}).get("rewards") != {"reward": expected}
+        or result.get("verifier_result", {}).get("rewards") != {"reward": reward}
     ):
         raise ValueError("missing, failed, or unexpected Harbor result")
-    # Harbor grades from reward.json before reward.txt; this verifier never
-    # writes one, so any reward.json is foreign.
+    # Harbor grades from reward.json before reward.txt; these verifiers never
+    # write one, so any reward.json is foreign.
     if os.path.lexists(trial / "verifier/reward.json"):
         raise ValueError("unexpected reward.json in verifier output")
-    sealed = seal(trial / "verifier", ["policy-evidence.json"])["files"][0]["content_base64"]
-    evidence = json.loads(base64.b64decode(sealed))
+    sealed = seal(trial / "verifier", [evidence])["files"][0]["content_base64"]
+    record = json.loads(base64.b64decode(sealed))
     if (
-        not isinstance(evidence, dict)
-        or set(evidence) != {"artifact_sha256", "checks", "reward", "schema_version", "mac"}
-        or evidence["schema_version"] != 2
-        or not isinstance(evidence["mac"], str)
-        or not hmac.compare_digest(evidence["mac"], evidence_mac(nonce, evidence))
+        not isinstance(record, dict)
+        or set(record) != {*keys, "mac"}
+        or not isinstance(record["mac"], str)
+        or not hmac.compare_digest(record["mac"], evidence_mac(nonce, record))
     ):
         raise ValueError("evidence is not bound to this run's verifier nonce")
-    if evidence["reward"] != expected:
+    if record["reward"] != reward:
         raise ValueError("evidence reward disagrees with Harbor")
-    checks = evidence.get("checks", {})
-    if set(checks) != CHECKS or any(type(value) is not bool for value in checks.values()):
-        raise ValueError("incomplete verifier coverage")
-    if all(checks.values()) != bool(expected):
-        raise ValueError("reward disagrees with checks")
-    bundle = seal(trial / "artifacts", ["policy.json"])
-    if bundle["files"][0]["sha256"] != evidence.get("artifact_sha256"):
-        raise ValueError("collected policy differs from verifier input")
+    bundle = seal(trial / "artifacts", [artifact])
+    if bundle["files"][0]["sha256"] != record["artifact_sha256"]:
+        raise ValueError("collected artifact differs from verifier input")
     if expected_bundle is not None:
         if bundle["artifact_sha256"] != expected_bundle["artifact_sha256"]:
             raise ValueError("Replay differs from the pre-verification seal")
+    return record, bundle
+
+
+def accept_result(job, agent, expected, nonce, *, expected_bundle=None):
+    evidence, bundle = accept_trial(
+        job,
+        agent,
+        expected,
+        nonce,
+        evidence="policy-evidence.json",
+        artifact="policy.json",
+        keys=EVIDENCE_KEYS,
+        expected_bundle=expected_bundle,
+    )
+    checks = evidence["checks"]
+    if (
+        evidence["schema_version"] != 2
+        or not isinstance(checks, dict)
+        or set(checks) != CHECKS
+        or any(type(value) is not bool for value in checks.values())
+    ):
+        raise ValueError("incomplete verifier coverage")
+    if all(checks.values()) != bool(expected):
+        raise ValueError("reward disagrees with checks")
     write_new(bundle, job / "policy.bundle.json")
     return {
         "agent": agent,

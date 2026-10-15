@@ -1,8 +1,9 @@
-"""Prepare reviewed declarative-policy replays; no Harbor dependency or dispatch.
+"""Prepare reviewed single-artifact replays; no Harbor dependency or dispatch.
 
 The caller supplies a trusted task template and a fresh controller-owned parent.
-Only validated policy.json bytes enter the agent build context. This does not
-harden Harbor's extraction boundary for hostile workers.
+Only the validated artifact bytes (a declarative policy.json or an application
+task's app.py) enter the agent build context. This does not harden Harbor's
+extraction boundary for hostile workers.
 """
 
 import base64
@@ -24,29 +25,62 @@ TRUSTED_FILES = (
     "tests/test.sh",
     "tests/check.py",
 )
+# Every verifier file of the application tasks, including the separate app
+# container's build inputs; a unit test keeps this equal to their tests/ trees.
+APP_TRUSTED_FILES = (
+    "task.toml",
+    "instruction.md",
+    "environment/docker-compose.yaml",
+    "tests/Dockerfile",
+    "tests/app.Dockerfile",
+    "tests/app-requirements.txt",
+    "tests/docker-compose.yaml",
+    "tests/fixture.py",
+    "tests/launch.py",
+    "tests/run.py",
+    "tests/test.sh",
+    "tests/verifier-requirements.in",
+    "tests/verifier-requirements.txt",
+    "tests/verify.py",
+)
 # Same reviewed multi-arch index digest as the task's agent image. A tag alone
 # can be repointed between runs; apt packages in the verifier image still can.
 AGENT_BASE_IMAGE = (
     "python:3.12-slim-bookworm@sha256:"
     "34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258"
 )
-REPLAY_DOCKERFILE = f"""FROM {AGENT_BASE_IMAGE}
+
+
+def replay_dockerfile(artifact: str) -> str:
+    return f"""FROM {AGENT_BASE_IMAGE}
 WORKDIR /candidate
-COPY policy.json /candidate/policy.json
-RUN chmod 444 /candidate/policy.json
+COPY {artifact} /candidate/{artifact}
+RUN chmod 444 /candidate/{artifact}
 """
 
 
-def prepare_replay(bundle: dict, template: Path, destination: Path) -> dict:
+REPLAY_DOCKERFILE = replay_dockerfile("policy.json")
+
+
+def prepare_replay(
+    bundle: dict,
+    template: Path,
+    destination: Path,
+    *,
+    artifact: str = "policy.json",
+    max_bytes: int = 4096,
+    trusted_files: tuple[str, ...] = TRUSTED_FILES,
+) -> dict:
     """Materialize a new Harbor task exclusively from sealed data + trusted code.
 
     Unknown files, tampering, and existing destinations are refused before writes.
     Source candidate paths and original solution scripts are never consulted.
     """
     summary = validate(bundle)
-    if summary["paths"] != ["policy.json"] or summary["total_bytes"] > 4096:
-        raise ValueError("Replay requires exactly one policy.json of at most 4096 bytes")
-    trusted = {name: (template / name).read_bytes() for name in TRUSTED_FILES}
+    if summary["paths"] != [artifact] or summary["total_bytes"] > max_bytes:
+        raise ValueError(f"Replay requires exactly one {artifact} of at most {max_bytes} bytes")
+    trusted = {name: (template / name).read_bytes() for name in trusted_files}
+    dockerfile = replay_dockerfile(artifact)
     destination.mkdir(exist_ok=False)
     try:
         for name, content in trusted.items():
@@ -54,8 +88,8 @@ def prepare_replay(bundle: dict, template: Path, destination: Path) -> dict:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
         environment = destination / "environment"
-        (environment / "Dockerfile").write_text(REPLAY_DOCKERFILE)
-        (environment / "policy.json").write_bytes(
+        (environment / "Dockerfile").write_text(dockerfile)
+        (environment / artifact).write_bytes(
             base64.b64decode(bundle["files"][0]["content_base64"], validate=True)
         )
     except BaseException:
@@ -63,8 +97,8 @@ def prepare_replay(bundle: dict, template: Path, destination: Path) -> dict:
         shutil.rmtree(destination)
         raise
     inputs = {name: hashlib.sha256(content).hexdigest() for name, content in trusted.items()}
-    inputs["environment/Dockerfile"] = hashlib.sha256(REPLAY_DOCKERFILE.encode()).hexdigest()
-    inputs["environment/policy.json"] = bundle["files"][0]["sha256"]
+    inputs["environment/Dockerfile"] = hashlib.sha256(dockerfile.encode()).hexdigest()
+    inputs[f"environment/{artifact}"] = bundle["files"][0]["sha256"]
     return {
         "schema_version": 1,
         "artifact_sha256": summary["artifact_sha256"],

@@ -3,7 +3,8 @@
 Harbor **0.24.0** is locked in the optional `harbor` dependency group. Core runtime
 imports remain independent of Harbor. This milestone exercises one public,
 declarative PostgreSQL RLS policy task with two reviewed controls, not model calls.
-It does **not** satisfy the M2 requirement for three application development tasks.
+It does **not** satisfy the M2 requirement for three application development tasks;
+those are in [APPLICATION_TASKS.md](APPLICATION_TASKS.md).
 
 ## Reproduce
 
