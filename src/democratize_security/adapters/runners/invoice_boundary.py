@@ -73,16 +73,32 @@ def audit_application(trial_name, inspections, nonce):
         ):
             raise ValueError("Unsafe namespace or security options")
     mounts = {m["Destination"]: m for m in app["Mounts"]}
-    if set(mounts) != {"/appsock", "/dbsocket", "/tmp"}:
-        raise ValueError("Application has unexpected mounts")
+    # Docker reports --tmpfs in HostConfig.Tmpfs, not necessarily Mounts.
+    if set(mounts) not in ({"/appsock", "/dbsocket"}, {"/appsock", "/dbsocket", "/tmp"}):
+        raise ValueError(f"Application has unexpected mounts: {sorted(mounts)}")
     for path, writable in (("/appsock", True), ("/dbsocket", False)):
         if mounts[path]["Type"] != "volume" or mounts[path]["RW"] != writable:
             raise ValueError("Incorrect application socket mount")
         peer = next((m for m in verifier["Mounts"] if m["Destination"] == path), None)
         if peer is None or peer["Source"] != mounts[path]["Source"] or peer["RW"] == writable:
             raise ValueError("Socket sharing does not match the reviewed topology")
-    if mounts["/tmp"]["Type"] != "tmpfs":
+    if "/tmp" in mounts and mounts["/tmp"]["Type"] != "tmpfs":
         raise ValueError("Application temporary storage is not tmpfs")
+    for cfg, sizes in ((host, {"16m", "16777216"}), (vh, {"128m", "134217728"})):
+        temporary = cfg.get("Tmpfs") or {}
+        if set(temporary) != {"/tmp"}:
+            raise ValueError("Missing or unexpected temporary mounts")
+        options = temporary["/tmp"].split(",")
+        execution = [x for x in options if x in {"exec", "noexec"}]
+        size = [x.removeprefix("size=") for x in options if x.startswith("size=")]
+        if (
+            not execution
+            or execution[-1] != "noexec"
+            or not size
+            or size[-1] not in sizes
+            or "nosuid" not in options
+        ):
+            raise ValueError("Temporary storage limits are not enforced")
     env = app["Config"].get("Env") or []
     if any(e.startswith(("DS_NONCE=", "DS_RUNTIME_PASSWORD=", "POSTGRES_PASSWORD=")) for e in env):
         raise ValueError("Unexpected credential in application environment")
@@ -93,5 +109,7 @@ def audit_application(trial_name, inspections, nonce):
         "verifier_image_id": verifier["Image"],
         "application_container_id": app["Id"],
         "verifier_container_id": verifier["Id"],
+        "application_tmpfs": host["Tmpfs"],
+        "verifier_tmpfs": vh["Tmpfs"],
         "limitations": ["reviewed_controls_only", "storage_unbounded", "shared_host_kernel"],
     }

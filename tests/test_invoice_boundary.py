@@ -17,7 +17,6 @@ def inspections():
                 "Type": "volume",
                 "RW": not writable,
             },
-            {"Destination": "/tmp", "Source": "", "Type": "tmpfs", "RW": True},
         ]
 
     app = {
@@ -39,6 +38,7 @@ def inspections():
             "MemorySwap": 256 * 1024 * 1024,
             "PidsLimit": 64,
             "NanoCpus": 1000000000,
+            "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},
         },
         "Mounts": mounts(True),
     }
@@ -51,6 +51,7 @@ def inspections():
         Memory=512 * 1024 * 1024,
         MemorySwap=512 * 1024 * 1024,
         PidsLimit=128,
+        Tmpfs={"/tmp": "rw,noexec,nosuid,size=128m"},
     )
     return [app, verifier]
 
@@ -93,5 +94,15 @@ def test_application_boundary_rejects_unsafe_observations(fault):
         observed.pop()
     else:
         app["HostConfig"]["SecurityOpt"].append("no-new-privileges:false")
+    with pytest.raises(ValueError):
+        audit_application("trial", observed, "nonce-value")
+
+
+@pytest.mark.parametrize(
+    "options", ["rw,nosuid,size=16m", "rw,noexec,nosuid,size=32m", "rw,noexec,nosuid,size=16m,exec"]
+)
+def test_tmpfs_configuration_must_remain_bounded_and_nonexecutable(options):
+    observed = inspections()
+    observed[0]["HostConfig"]["Tmpfs"] = {"/tmp": options}
     with pytest.raises(ValueError):
         audit_application("trial", observed, "nonce-value")
