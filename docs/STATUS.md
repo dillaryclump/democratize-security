@@ -27,8 +27,12 @@ The hardened audit passed 10/10 checks, policy controls/replays matched and the
 grade-forgery control was rejected.
 
 Invoice-read slice: local Python 3.12 with reference dependencies has 161 passing
-tests and 23 infrastructure skips; Ruff and package build pass. New live
-application-control validation is pending CI. Skips are not execution evidence.
+tests and 23 infrastructure skips; core-only has 154 passing tests and 24 skips.
+Ruff and package build pass. CI [38665693361](https://github.com/dillaryclump/democratize-security/actions/runs/38665693361)
+at d7f285904456943c84bcef99400661b5f241857d passed all five jobs. PostgreSQL:
+177 passed, 7 Docker-only skipped. All three application controls replayed twice
+with exactly the intended outcomes; UTF8 assertion passed. The dedicated Docker
+probe and existing hardened Harbor controls/replay/audit also passed.
 
 ## Immediate next task
 

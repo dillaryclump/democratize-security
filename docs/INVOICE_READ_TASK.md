@@ -5,7 +5,9 @@ application faults, not only unsafe SQL policies. It is a prerequisite to Harbor
 application dispatch, not M2 completion.
 
 Instructions: `tasks/application/invoice-read/instruction.md`.
-Reviewed starter: `src/democratize_security/reference/app.py`.
+Reviewed oracle: `src/democratize_security/reference/app.py`. The deny-all
+control supplies the intentionally broken read route to repair. Task packaging
+for an agent remains part of the next Harbor integration slice.
 
 | Control | Required result | Purpose |
 | --- | --- | --- |
@@ -53,3 +55,13 @@ app.py into it, and verify via HTTP and database checks. Reuse Harbor hardening
 where applicable and audit any new communication paths. Never execute candidate
 code in the nonce-bearing verifier. Keep the eight-check public oracle as
 regression coverage. Complete list/search and export task families afterward.
+
+## Observed validation
+
+CI [38665693361](https://github.com/dillaryclump/democratize-security/actions/runs/38665693361)
+at d7f285904456943c84bcef99400661b5f241857d passed all five jobs. The PostgreSQL
+job ran all four new integration cases (three twice-replayed controls and the
+encoding assertion): 177 tests passed, 7 Docker-only cases skipped. Dedicated
+worker and hardened Harbor checks passed separately. Local reference environment:
+161 passed, 23 infrastructure skips; core-only: 154 passed, 24 skips. Ruff and
+package build passed. These results validate reviewed application controls only.
