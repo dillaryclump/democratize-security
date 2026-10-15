@@ -159,7 +159,8 @@ def test_app_service_is_hardened_and_confined():
     ):
         assert f"\n    {line}\n" in app, line
     assert "\n      - candidate:/candidate:ro\n" in app
-    assert "cap_add" not in app and "tmpfs" not in app and "environment" not in app
+    assert "\n    tmpfs:\n      - /tmp:rw,noexec,nosuid,size=16m\n" in app
+    assert "cap_add" not in app and "environment" not in app
     main = compose[compose.index("\n  main:\n") : compose.index("\n  app:\n")]
     assert '\n    network_mode: "none"\n' in main
     assert "\n      - candidate:/candidate\n" in main

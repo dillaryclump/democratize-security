@@ -395,6 +395,7 @@ def observed_app(observed):
         SecurityOpt=["no-new-privileges:true"],
         ReadonlyRootfs=True,
         PidsLimit=64,
+        Tmpfs={"/tmp": "rw,noexec,nosuid,size=16m"},
     )
     app["Mounts"] = [candidate_mount(volume, writable=False)]
     containers["app"] = app
@@ -429,7 +430,8 @@ def test_app_container_shape_passes(observed_app, tmp_path):
         ("log_bind", "mount_scope"),
         ("other_volume", "mount_scope"),
         ("anonymous_volume", "mount_scope"),
-        ("tmpfs", "mount_scope"),
+        ("executable_tmpfs", "mount_scope"),
+        ("other_tmpfs", "mount_scope"),
         ("verifier_without_candidate", "mount_scope"),
         ("verifier_read_only_candidate", "mount_scope"),
         ("root", "least_privilege"),
@@ -475,8 +477,10 @@ def test_app_boundary_violation_fails(observed_app, mutation, check):
         app["Mounts"].append(
             {"Type": "volume", "Name": "e" * 64, "Destination": "/data", "RW": True}
         )
-    elif mutation == "tmpfs":
-        host["Tmpfs"] = {"/tmp": "rw,noexec"}
+    elif mutation == "executable_tmpfs":
+        host["Tmpfs"]["/tmp"] = "rw,noexec,exec,size=16m"
+    elif mutation == "other_tmpfs":
+        host["Tmpfs"]["/candidate"] = "rw,noexec"
     elif mutation == "verifier_without_candidate":
         containers["verifier"]["Mounts"].pop()
     elif mutation == "verifier_read_only_candidate":

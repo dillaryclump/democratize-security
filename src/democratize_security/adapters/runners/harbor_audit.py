@@ -7,8 +7,9 @@ reviewed trial; it is not a container-escape proof or hostile-workload approval.
 
 Policy v3 also admits the application tasks' optional verifier-side `app`
 service, where candidate code runs: it must join only the verifier main's
-loopback-only namespace, mount only the project's candidate volume read-only,
-and be unprivileged and bounded like the main containers.
+loopback-only namespace, mount only the project's candidate volume read-only
+(plus a `noexec` `/tmp` tmpfs), and be unprivileged and bounded like the main
+containers.
 """
 
 import json
@@ -268,7 +269,7 @@ def audit(
                 is_main = service == "main"
                 is_app = project == verifier_project and service == APP
                 tmpfs = container["HostConfig"].get("Tmpfs") or {}
-                if not set(tmpfs) <= (TMPFS if is_main else set()) or any(
+                if not set(tmpfs) <= (TMPFS if is_main or is_app else set()) or any(
                     _last_flag(options.split(","), {"exec", "noexec"}) != "noexec"
                     for options in tmpfs.values()
                 ):

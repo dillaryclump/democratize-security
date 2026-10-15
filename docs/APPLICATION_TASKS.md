@@ -59,9 +59,10 @@ The separate verifier has two services, built from `tests/`:
   none`, read-only root.
 - `app`: the candidate runtime. Locked dependencies and a trusted launcher only,
   no verifier code. It runs as `20001:20001` with no capabilities, 256 MiB
-  without swap, one CPU, 64 PIDs and a read-only root. It joins `main`'s network
-  namespace, which has only loopback. Its sole mount is the project-scoped
-  `candidate` volume, read-only.
+  without swap, one CPU, 64 PIDs and a read-only root. A 16 MiB `noexec` `/tmp`
+  tmpfs matches the agent's. It joins `main`'s network namespace, which has
+  only loopback. Its sole mount is the project-scoped `candidate` volume,
+  read-only.
 
 One verification:
 

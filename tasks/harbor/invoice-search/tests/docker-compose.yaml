@@ -32,6 +32,9 @@ services:
     user: "20001:20001"
     init: true
     read_only: true
+    # The same bounded, non-executable scratch space the agent gets.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 64
