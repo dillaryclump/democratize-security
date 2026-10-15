@@ -1,6 +1,6 @@
 # System architecture
 
-Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
+Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. Three application tasks (read, list/search, CSV) run model-free under that layout, with candidate code isolated from the verifier and sealed replays; see APPLICATION_TASKS.md. Trusted artifact extraction (runtime step 5) is not yet implemented. See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
 
 ## Three separate authority domains
 
@@ -27,11 +27,11 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | CLI | `src/democratize_security/cli.py` | Implemented `validate`, `plan`, `seal` and `inspect-artifact`; no execution CLI |
 | Controller | future `controller/` within Python package | Reserve budgets, schedule finite trials, persist transitions; never import workload code |
 | Store | future `store/` | SQLite metadata, append-only events and content-addressed artifacts; backup/recovery |
-| Runner adapters | `adapters/runners/` | Harbor first; current reviewed-data spike is `scripts/harbor_spike.py`, not a production adapter. The stdlib Harbor boundary audit lives in `adapters/runners/harbor_audit.py`; the core must not import it. See HARBOR.md and HARBOR_AUDIT.md |
+| Runner adapters | `adapters/runners/` | Harbor first; current reviewed-data spike is `scripts/harbor_spike.py`, not a production adapter. The stdlib Harbor boundary audit lives in `adapters/runners/harbor_audit.py`; the core must not import it. `scripts/harbor_apps.py` runs the three application tasks in `tasks/harbor/invoice-*`. See HARBOR.md, HARBOR_AUDIT.md and APPLICATION_TASKS.md |
 | Benchmark adapters | future `adapters/benchmarks/` | Prepare/inject/extract/normalize; preserve original scoring and task provenance |
 | Proposer adapters | future `adapters/proposers/` | Manual candidate initially, GEPA later; development feedback only |
 | Security integration | `candidates/` | Prompts/templates/helpers/policies that the product ships; cannot define authoritative grades |
-| Verifier | `src/democratize_security/verification/` | Public fixed-fixture HTTP/database checks implemented; protected verification and sealed-artifact provenance remain future work |
+| Verifier | `src/democratize_security/verification/` | Public fixed-fixture HTTP/database checks implemented and bound to sealed artifacts in the Harbor tasks; protected verification and trusted extraction (runtime step 5) remain future work |
 | Reporting | future `reports/` | Aggregate all scheduled outcomes, costs, uncertainty and limitations |
 
 Do not create empty plugin classes for every hypothetical future integration. Add a module when its first concrete behavior and tests are implemented.

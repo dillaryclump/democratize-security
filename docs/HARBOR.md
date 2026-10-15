@@ -3,7 +3,8 @@
 Harbor **0.24.0** is locked in the optional `harbor` dependency group. Core runtime
 imports remain independent of Harbor. This milestone exercises one public,
 declarative PostgreSQL RLS policy task with two reviewed controls, not model calls.
-It does **not** satisfy the M2 requirement for three application development tasks.
+It does **not** satisfy the M2 requirement for three application development tasks;
+those are in [APPLICATION_TASKS.md](APPLICATION_TASKS.md).
 
 ## Reproduce
 
@@ -65,11 +66,12 @@ The spike has no recovery controller, adversarial containment proof, private tes
 production identity, or independent application HTTP assessment. A killed host
 process may require container cleanup; use disposable runners.
 
-Next: retain the sealed policy replay regression and the v2 boundary audit, then
-adapt read/list/export application tasks to the hardened layout using the
-independent HTTP/database verifier. Establish the
-three-task fresh-replay gate and dedicated-host policy before model execution.
-Do not infer M2 completion from an oracle reward of 1.
+Next: retain the sealed policy replay regression and the v3 boundary audit. The
+read/list/export application tasks now run under the hardened layout with the
+independent HTTP/database verifier; see APPLICATION_TASKS.md for their
+fresh-replay evidence and for the next gate, a trusted artifact collector.
+Establish the dedicated-host policy before model execution. Do not infer M2
+completion from an oracle reward of 1.
 
 Pinned upstream contracts:
 - [Task configuration](https://github.com/harbor-framework/harbor/blob/v0.24.0/src/harbor/models/task/config.py)

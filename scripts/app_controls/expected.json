@@ -1,0 +1,68 @@
+{
+  "invoice-read": {
+    "nop": {
+      "database_configuration": "pass",
+      "authorized_reads": "fail",
+      "foreign_reads": "fail",
+      "list_search": "pass",
+      "exports": "pass",
+      "identity": "fail",
+      "spoofing": "fail",
+      "tenant_switching": "pass"
+    },
+    "unsafe": {
+      "database_configuration": "pass",
+      "authorized_reads": "pass",
+      "foreign_reads": "pass",
+      "list_search": "pass",
+      "exports": "pass",
+      "identity": "pass",
+      "spoofing": "fail",
+      "tenant_switching": "pass"
+    }
+  },
+  "invoice-search": {
+    "nop": {
+      "database_configuration": "pass",
+      "authorized_reads": "pass",
+      "foreign_reads": "pass",
+      "list_search": "fail",
+      "exports": "pass",
+      "identity": "fail",
+      "spoofing": "fail",
+      "tenant_switching": "fail"
+    },
+    "unsafe": {
+      "database_configuration": "pass",
+      "authorized_reads": "pass",
+      "foreign_reads": "pass",
+      "list_search": "fail",
+      "exports": "pass",
+      "identity": "pass",
+      "spoofing": "fail",
+      "tenant_switching": "fail"
+    }
+  },
+  "invoice-export": {
+    "nop": {
+      "database_configuration": "pass",
+      "authorized_reads": "pass",
+      "foreign_reads": "pass",
+      "list_search": "pass",
+      "exports": "fail",
+      "identity": "pass",
+      "spoofing": "fail",
+      "tenant_switching": "pass"
+    },
+    "unsafe": {
+      "database_configuration": "pass",
+      "authorized_reads": "pass",
+      "foreign_reads": "pass",
+      "list_search": "pass",
+      "exports": "pass",
+      "identity": "pass",
+      "spoofing": "fail",
+      "tenant_switching": "pass"
+    }
+  }
+}

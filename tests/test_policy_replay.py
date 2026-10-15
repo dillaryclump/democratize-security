@@ -89,3 +89,12 @@ def test_different_replay_artifact_cannot_be_bound(tmp_path):
     other["artifact_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="does not match"):
         record_replay(bundle, manifest, {"artifact_sha256": other["artifact_sha256"]})
+
+
+def test_replay_kind_names_the_artifact_family(tmp_path):
+    _, bundle = sealed(tmp_path)
+    manifest = prepare_replay(bundle, TEMPLATE, tmp_path / "replay")
+    result = {"artifact_sha256": bundle["artifact_sha256"], "security_verdict": "not_evaluated"}
+    assert record_replay(bundle, manifest, result)["result"]["kind"] == "sealed_policy_replay"
+    app = record_replay(bundle, manifest, result, kind="sealed_app_replay")
+    assert app["result"]["kind"] == "sealed_app_replay"

@@ -1,6 +1,6 @@
 # Current status and next handoff
 
-Updated: 2026-10-14. Current work: M2 Harbor integration prerequisite. M2 is not complete; see HARBOR.md and the latest evidence below.
+Updated: 2026-10-15. Current work: M2 runner gate. The three application tasks run model-free under the hardened Harbor layout; see APPLICATION_TASKS.md and the latest evidence below. Owner acceptance of M2 is pending.
 
 ## Implemented
 
@@ -153,3 +153,79 @@ at `cd5c433` passed all five jobs on a GitHub runner (uid 1001, cgroup v2).
   agent probe reported no default route.
 
 Next: the three application tasks under this layout. No model calls, spending or hostile-candidate execution are authorized.
+
+## Harbor application tasks (2026-10-15)
+
+Implemented the three M2 application tasks: invoice read, list/search and CSV
+export (`tasks/harbor/invoice-*`). Each starts from the reference app with one
+endpoint removed. Candidate code runs only in a separate `app` service of the
+separate verifier: uid `20001:20001`, no capabilities, read-only root, 256 MiB
+without swap, joined to the verifier's loopback-only namespace and mounting only
+the project's candidate volume read-only. A trusted orchestrator provisions a
+fresh database and hands the app a restricted DSN. It grades the app with
+protocol `synthetic-reference-v3`, which adds spoofing checks across read, list
+and export, and writes nonce-bound evidence (schema 3). `scripts/harbor_apps.py`
+runs oracle, nop and a reviewed unsafe control per task, replays the sealed
+oracle and unsafe artifacts, and audits every trial. Audit policy v3 admits and
+constrains the app container. See APPLICATION_TASKS.md.
+
+Local evidence at `720fb80` (Docker 29.8.2, cgroup v1, root host):
+- Full suite with PostgreSQL 16 and the Docker worker tests: 235 passed, no
+  skips. Ruff passes.
+- `harbor_apps.py` for all three tasks: 15 trials, every outcome exactly as
+  reviewed. Oracles 1. Nops 0. Unsafe controls 0, failing only spoofing (read,
+  export) or list_search, spoofing and tenant_switching (search). Both replays
+  per task reproduced their sealed hashes and outcomes.
+- 15/15 v3 audits passed with 4 gaps: the three v2 gaps plus
+  `app_storage_unbounded`. The positive control was observed and no trial
+  connection reached the host listener.
+- Policy-task regressions under v3: the tamper audit passed 10/10 with the same
+  3 gaps, and the forgery was observed and discarded (genuine reward 0). The
+  replays kept bundle hashes `6fb653ff…` and `34da710d…`.
+- Image builds here needed an uncommitted patch so pip trusts this sandbox's
+  TLS-intercepting proxy. Committed Dockerfiles are unchanged; CI builds them
+  as committed.
+
+CI on the GitHub runner (uid 1001, cgroup v2) passed every job, including one
+`harbor-apps` job per task: [run 38673823006](https://github.com/dillaryclump/democratize-security/actions/runs/38673823006)
+at `720fb80`, [38674490600](https://github.com/dillaryclump/democratize-security/actions/runs/38674490600)
+at `5d9246c` and [38674863679](https://github.com/dillaryclump/democratize-security/actions/runs/38674863679)
+at `8a244ad`.
+
+Review fixes after the first evidence:
+- Copilot found that the launcher ran the candidate unregistered in
+  `sys.modules`, so a correct app using postponed annotations crashed. Fixed,
+  with a regression test.
+- An adversarial review found:
+  - the app had no writable `/tmp`, unlike the agent;
+  - audit v3 did not reject PID or IPC namespace sharing with the verifier, or
+    a shared uid;
+  - application replays were labelled `sealed_policy_replay`;
+  - the evidence text was not pinned to revisions.
+
+  All are fixed. The verifier now runs as numeric `999:999`. A local
+  `invoice-read` run with these fixes passed 5/5 trials with exact outcomes
+  and 5/5 audits: app uid 20001, private PID and IPC namespaces.
+- The final review round found more, all fixed:
+  - a valid `app.py` saved as 0600 was graded `invalid_submission`, so it
+    is now its own bound zero, `unreadable_submission`, and the instructions
+    ask for a readable file;
+  - no test exercised exact-check acceptance, and the starter and unsafe AST
+    tests skipped module functions, async handlers and plain statements;
+  - the app-image test missed multi-file `COPY` and `ADD`;
+  - v3 admitted the named candidate volume without an app;
+  - several docs overstated or were stale.
+
+  Mutation checks confirm the new tests fail on the defects they target. CI
+  [run 38748449846](https://github.com/dillaryclump/democratize-security/actions/runs/38748449846)
+  at `82f0603` passed every job with the final code and rules.
+- The review also confirmed a pre-existing gap: Harbor moves the artifact
+  through the host unchecked, so a symlink is resolved there and nothing bounds
+  the size. This holds for both task families and is recorded as a limit in
+  APPLICATION_TASKS.md; ARCHITECTURE.md step 5 is not yet met.
+
+No model calls, spending or hostile-candidate execution are authorized. Next:
+- a trusted artifact collector that stops the worker, rejects links and special
+  files and bounds size before Harbor's transfer (ARCHITECTURE.md step 5);
+- owner review of the M2 evidence;
+- a dedicated worker host and an approved budget before any agent runs.

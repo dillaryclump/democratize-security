@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 import httpx
 import psycopg
 
+PROTOCOL = "synthetic-reference-v3"
 REQUIRED = frozenset(
     {
         "database_configuration",
@@ -54,7 +55,7 @@ def summarize(checks: list[Check]) -> dict:
     )
     return {
         "schema_version": 1,
-        "protocol": "synthetic-reference-v2",
+        "protocol": PROTOCOL,
         "coverage": "complete" if complete else "incomplete",
         "outcome": ("pass" if all(c.outcome == "pass" for c in checks) else "fail")
         if complete
@@ -66,6 +67,17 @@ def summarize(checks: list[Check]) -> dict:
 def _require(condition: bool, detail: str):
     if not condition:
         raise AssertionError(detail)
+
+
+def _csv_expected(invoices: list[dict]) -> list[dict]:
+    return [{k: str(v) for k, v in row.items()} for row in invoices]
+
+
+def _csv_rows(text: str) -> list[dict] | None:
+    reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames != ["id", "description", "amount_cents"]:
+        return None
+    return list(reader)
 
 
 def verify(client: httpx.Client, runtime_dsn: str) -> dict:
@@ -162,8 +174,10 @@ def verify(client: httpx.Client, runtime_dsn: str) -> dict:
             _require(
                 reader.fieldnames == ["id", "description", "amount_cents"], "Unexpected CSV fields"
             )
-            expected = [{k: str(v) for k, v in row.items()} for row in invoices]
-            _require(list(reader) == expected, "Export missing authorized or exposing foreign data")
+            _require(
+                list(reader) == _csv_expected(invoices),
+                "Export missing authorized or exposing foreign data",
+            )
 
     def identity():
         for path in ("/invoices", "/invoices/1", "/invoices/export"):
@@ -202,14 +216,32 @@ def verify(client: httpx.Client, runtime_dsn: str) -> dict:
                 )
 
     def spoofing():
-        response = client.get(
-            "/invoices?tenant_id=org-b",
-            headers={"Authorization": "Bearer fixture-alice", "X-Tenant-ID": "org-b"},
-        )
-        _require(
-            response.status_code == 200 and response.json() == EXPECTED["fixture-alice"],
-            "Client tenant input changed effective identity",
-        )
+        # Client tenant hints in headers or query parameters, alone or together,
+        # must never change the server-derived identity on any endpoint.
+        for token, other in (("fixture-alice", "fixture-bob"), ("fixture-bob", "fixture-alice")):
+            organization = "org-b" if token == "fixture-alice" else "org-a"
+            headers = {"X-Tenant-ID": organization, "X-Organization-ID": organization}
+            query = f"tenant_id={organization}&organization={organization}"
+            for hint_headers, hint_query in ((headers, ""), ({}, query), (headers, query)):
+                sent = {"Authorization": f"Bearer {token}", **hint_headers}
+                listed = client.get(f"/invoices?{hint_query}", headers=sent)
+                _require(
+                    listed.status_code == 200 and listed.json() == EXPECTED[token],
+                    "Client tenant input changed listed records",
+                )
+                for invoice in EXPECTED[other]:
+                    response = client.get(f"/invoices/{invoice['id']}?{hint_query}", headers=sent)
+                    _require(
+                        response.status_code == 404
+                        and response.json() == {"detail": "Invoice not found"},
+                        "Client tenant input exposed a foreign invoice",
+                    )
+                exported = client.get(f"/invoices/export?{hint_query}", headers=sent)
+                _require(
+                    exported.status_code == 200
+                    and _csv_rows(exported.text) == _csv_expected(EXPECTED[token]),
+                    "Client tenant input changed exported records",
+                )
 
     def switching():
         for token in ("fixture-alice", "fixture-bob") * 4:

@@ -1,7 +1,9 @@
 # Sealed policy replay
 
 This M2 prerequisite adds fresh Harbor verification of pre-existing sealed policy
-bytes. It remains a public declarative fixture, not the three application tasks.
+bytes. It remains a public declarative fixture. The three application tasks reuse
+the same preparation for a sealed `app.py`; see
+[APPLICATION_TASKS.md](APPLICATION_TASKS.md).
 
 ## Run
 
@@ -37,7 +39,11 @@ trusted verifier source hash, generated task manifest and accepted result using
 the existing evidence envelope. `security_verdict` remains `not_evaluated` because
 this is infrastructure evidence, not an application assessment.
 
-Code: `policy_replay.py` prepares and binds data without importing Harbor;
+Code: `policy_replay.py` prepares and binds data without importing Harbor. Its
+`prepare_replay` takes the artifact name, size bound and trusted file list, so
+application replays accept exactly one `app.py` of at most 65536 bytes and copy
+every verifier file (`APP_TRUSTED_FILES`), including the candidate container's
+build inputs;
 `scripts/harbor_replay.py` owns the fixed trial sequence. Existing
 `scripts/harbor_spike.py` checks actual Harbor results.
 
@@ -46,16 +52,16 @@ Code: `policy_replay.py` prepares and binds data without importing Harbor;
 The seal is now an input to replay verification, rather than only a post-hoc
 comparison. However, Harbor still collects/transfers files before host acceptance;
 this change does not make its extraction safe for arbitrary hostile workers.
-The code supports reviewed JSON policies only. Base images are digest-pinned, but
+The code supports one reviewed policy.json or one app.py per replay. Base images
+are digest-pinned, but
 apt packages remain mutable; task/verifier source hashes do not identify the
 entire runtime image.
 No dedicated-host approval, protected tests, model budget, persistence/recovery,
 or application-task gate is implied. Outputs on hosted CI runners are ephemeral;
 checked summaries are printed to logs, with observed evidence recorded below.
 
-Next: integrate three real application tasks under the hardened layout audited in
-[HARBOR_AUDIT.md](HARBOR_AUDIT.md), with independent HTTP/database checks. Preserve this
-small replay regression when expanding the runner.
+The three application tasks now run under the hardened layout audited in
+[HARBOR_AUDIT.md](HARBOR_AUDIT.md). Keep this small replay regression.
 
 ## Validation
 

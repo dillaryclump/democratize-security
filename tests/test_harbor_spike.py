@@ -140,10 +140,13 @@ def test_replay_rejects_valid_result_for_different_sealed_input(tmp_path):
 
 
 def test_harbor_base_images_are_digest_pinned():
-    from democratize_security.policy_replay import REPLAY_DOCKERFILE
+    from democratize_security.policy_replay import REPLAY_DOCKERFILE, replay_dockerfile
 
-    sources = [path.read_text() for path in (ROOT / "tasks/harbor").rglob("Dockerfile")]
-    for text in [*sources, REPLAY_DOCKERFILE]:
+    paths = list((ROOT / "tasks/harbor").rglob("*Dockerfile"))
+    # Includes the application tasks' separate candidate-runtime images.
+    assert len([p for p in paths if p.name == "app.Dockerfile"]) == 3
+    sources = [path.read_text() for path in paths]
+    for text in [*sources, REPLAY_DOCKERFILE, replay_dockerfile("app.py")]:
         # Docker ignores case and leading whitespace; flags or stage references
         # in place of a pinned image fail closed.
         bases = re.findall(r"^\s*from\s+(\S+)", text, re.IGNORECASE | re.MULTILINE)

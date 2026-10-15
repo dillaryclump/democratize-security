@@ -154,9 +154,12 @@ class Listener:
 
 
 class Watcher:
-    """Record container lifecycle events and inspect each container as it starts."""
+    """Record container lifecycle events and inspect each container as it starts.
 
-    def __init__(self, job):
+    With a tamper `job`, also snapshot its forged grades when the agent stops.
+    """
+
+    def __init__(self, job=None):
         self.job = job
         self.events = []
         self.inspections = {}
@@ -183,7 +186,8 @@ class Watcher:
                 if result.returncode == 0:
                     self.inspections[identity] = json.loads(result.stdout)[0]
             elif (
-                event.get("Action") == "die"
+                self.job is not None
+                and event.get("Action") == "die"
                 and labels.get("com.docker.compose.service") == "main"
                 and labels.get("com.docker.compose.project", "").endswith("__env")
             ):
@@ -215,6 +219,31 @@ class Watcher:
         self.thread.join(timeout=10)
 
 
+def positive_control(listener, watcher):
+    """Count host-listener hits from a probe container on a fresh bridge network.
+
+    Like Harbor's compose networks it is user-defined: without a hit here, a zero
+    trial count would show nothing.
+    """
+    network = f"ds-audit-control-{listener.port}"
+    subprocess.run(["docker", "network", "create", network], check=True, capture_output=True)
+    try:
+        control = subprocess.run(
+            ["docker", "run", "--detach", "--network", network, AGENT_BASE_IMAGE]
+            + ["python3", "-I", "-c", PROBE.replace("PORT", str(listener.port))],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        ).stdout.strip()
+        watcher.wait_for(control)
+        subprocess.run(["docker", "wait", control], check=True, timeout=60, capture_output=True)
+        subprocess.run(["docker", "rm", control], check=True, timeout=60, capture_output=True)
+    finally:
+        subprocess.run(["docker", "network", "rm", network], check=True, capture_output=True)
+    return listener.take(wait_for=1)
+
+
 def main():
     from importlib.metadata import version
 
@@ -225,26 +254,8 @@ def main():
     job = OUTPUT / "tamper"
     listener = Listener()
     watcher = Watcher(job)
-    network = f"ds-audit-control-{listener.port}"
     try:
-        # Positive control on a fresh user-defined bridge, like Harbor's compose
-        # networks: without a hit here, a zero trial count would show nothing.
-        subprocess.run(["docker", "network", "create", network], check=True, capture_output=True)
-        try:
-            control = subprocess.run(
-                ["docker", "run", "--detach", "--network", network, AGENT_BASE_IMAGE]
-                + ["python3", "-I", "-c", PROBE.replace("PORT", str(listener.port))],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=300,
-            ).stdout.strip()
-            watcher.wait_for(control)
-            subprocess.run(["docker", "wait", control], check=True, timeout=60, capture_output=True)
-            subprocess.run(["docker", "rm", control], check=True, timeout=60, capture_output=True)
-        finally:
-            subprocess.run(["docker", "network", "rm", network], check=True, capture_output=True)
-        control_connections = listener.take(wait_for=1)
+        control_connections = positive_control(listener, watcher)
         task = OUTPUT / "task-tamper"
         prepare_tamper(task, listener.port)
         nonce = harbor_spike.run_trial(task, "oracle", OUTPUT, "tamper")
