@@ -1,5 +1,25 @@
 # Current status and next handoff
 
+## Artifact publication follow-up (2026-10-15, issue #24)
+
+Branch `fix/durable-artifact-publication`, based on main `1124a0c`, adds
+parent-directory fsync after no-overwrite artifact publication and temporary-name
+cleanup. A sync failure propagates; an already linked destination is retained
+for reconciliation. See ARTIFACTS.md for filesystem assumptions and ambiguous
+failure semantics. This is a bounded prerequisite for recovery, not an M3 store
+or dispatch implementation, and does not change collector PR #17.
+
+Local Python 3.12 validation: `uv sync --locked`; artifact tests 29 passed;
+full core suite 201 passed, 43 skipped (optional reference dependencies and
+PostgreSQL/Docker configuration unavailable); Ruff check/format and `uv build`
+passed. Fault injection covers failures before and after publication, preserved
+destination bytes and no-overwrite retries. No physical power-loss testing or
+new live Harbor/PostgreSQL evidence is claimed. Next: PR/CI review, then the
+offline persistence contract in #21; M2 owner acceptance remains separate.
+
+Integration note: preserve this additive handoff when reconciling STATUS.md
+with #17 and coordination PR #22. Other agents retain ownership of those PRs.
+
 Updated: 2026-10-15. Current work: M2 runner gate. The three application tasks run model-free under the hardened Harbor layout; see APPLICATION_TASKS.md and the latest evidence below. Owner acceptance of M2 is pending.
 
 ## Implemented

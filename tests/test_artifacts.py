@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import stat
 
 import pytest
 
@@ -107,6 +108,61 @@ def test_duplicate_json_and_oversized_input(tmp_path, monkeypatch):
     monkeypatch.setattr(a, "MAX_BUNDLE_BYTES", 1)
     with pytest.raises(a.ArtifactError):
         a.load(path)
+
+
+def test_publication_syncs_contents_then_directory(root, tmp_path, monkeypatch):
+    bundle = a.seal(root, ["app.py"])
+    output = tmp_path / "bundle.json"
+    real_fsync = os.fsync
+    synced = []
+
+    def observe_sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            assert a.load(output) == bundle
+            assert not list(tmp_path.glob(".artifact-*"))
+            synced.append("directory")
+        else:
+            assert not output.exists()
+            synced.append("file")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", observe_sync)
+    a.write_new(bundle, output)
+    assert synced == ["file", "directory"]
+
+
+@pytest.mark.parametrize("fail_directory", [False, True])
+def test_sync_failure_is_not_success(root, tmp_path, monkeypatch, fail_directory):
+    bundle = a.seal(root, ["app.py"])
+    output = tmp_path / "bundle.json"
+    real_fsync = os.fsync
+    descriptors = []
+
+    def fail_sync(fd):
+        descriptors.append(fd)
+        if stat.S_ISDIR(os.fstat(fd).st_mode) == fail_directory:
+            raise OSError("injected sync failure")
+        real_fsync(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", fail_sync)
+        with pytest.raises(OSError, match="injected sync failure"):
+            a.write_new(bundle, output)
+    assert not list(tmp_path.glob(".artifact-*"))
+    for fd in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    if fail_directory:
+        # Publication already happened. Keep the exact bytes for reconciliation;
+        # a retry must never overwrite them or imply a new successful publication.
+        assert a.load(output) == bundle
+        with pytest.raises(FileExistsError):
+            a.write_new(bundle, output)
+        assert a.load(output) == bundle
+    else:
+        assert not output.exists()
+        a.write_new(bundle, output)
+        assert a.load(output) == bundle
 
 
 def test_evidence_binding_and_caller_mutation(root):
