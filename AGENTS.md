@@ -37,4 +37,9 @@ Every PR states: problem; change; requirement covered; tests actually run and th
 
 ## Immediate next work
 
+The invoice-read contract and reviewed application controls are described in
+docs/INVOICE_READ_TASK.md. Next connect them to a separate application runtime
+under hardened Harbor. The subprocess test harness is not approved for generated
+code; application execution must stay away from verifier credentials and nonce.
+
 Read docs/REFERENCE.md for the implemented synthetic reference and public verifier. Identity/error-path checks are implemented. Read docs/ARTIFACTS.md for the M2 artifact prerequisite and read docs/WORKER_PROBE.md for the implemented offline host probe. Read docs/HARBOR.md for the pinned, model-free separate-verifier policy spike. Read docs/SEALED_REPLAY.md for implemented reviewed-policy sealed replay and docs/HARBOR_AUDIT.md for the hardened container layout, nonce-bound verifier evidence and the v2 boundary audit that enforces them. Implement the three actual application tasks next, reusing that layout and keeping the audit as a regression; synthetic probe programs do not satisfy the M2 task gate. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.

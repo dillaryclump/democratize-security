@@ -35,7 +35,11 @@ def database():
                 "NOCREATEDB NOCREATEROLE NOREPLICATION"
             ).format(sql.Identifier(role), sql.Literal(password))
         )
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        admin.execute(
+            sql.SQL("CREATE DATABASE {} TEMPLATE template0 ENCODING 'UTF8'").format(
+                sql.Identifier(name)
+            )
+        )
         settings = conninfo_to_dict(dsn)
         settings["dbname"] = name
         setup_dsn = make_conninfo(**settings)
@@ -88,7 +92,7 @@ def database():
 @pytest.fixture
 def serve(tmp_path):
     @contextmanager
-    def start(runtime_dsn):
+    def start(runtime_dsn, *, application_directory=None):
         import httpx
 
         with socket.socket() as probe:
@@ -97,19 +101,24 @@ def serve(tmp_path):
         env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT") if k in os.environ}
         env["REFERENCE_DATABASE_URL"] = runtime_dsn
         with (tmp_path / "reference.log").open("w+") as log:
+            command = [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "app:create_app"
+                if application_directory
+                else "democratize_security.reference.app:create_app",
+                "--factory",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--no-access-log",
+            ]
+            if application_directory is not None:
+                command.extend(["--app-dir", str(application_directory)])
             process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "uvicorn",
-                    "democratize_security.reference.app:create_app",
-                    "--factory",
-                    "--host",
-                    "127.0.0.1",
-                    "--port",
-                    str(port),
-                    "--no-access-log",
-                ],
+                command,
                 env=env,
                 stdout=log,
                 stderr=log,
