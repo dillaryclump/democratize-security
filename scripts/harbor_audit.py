@@ -113,7 +113,11 @@ def service_limits(compose, service):
     memory = re.fullmatch(r"(\d+)m", str(declared["mem_limit"]))
     if not memory or declared["memswap_limit"] != declared["mem_limit"]:
         raise ValueError(f"{service} memory must be declared in MiB without swap")
-    return {"cpus": declared["cpus"], "memory_mb": int(memory.group(1))}
+    return {
+        "cpus": declared["cpus"],
+        "memory_mb": int(memory.group(1)),
+        "pids": int(declared["pids_limit"]),
+    }
 
 
 def prepare_tamper(destination, port):

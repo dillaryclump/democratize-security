@@ -30,7 +30,7 @@ random TCP port on all host interfaces to count connections. The CI
 
 All gating inputs come from the controller, never from the candidate:
 
-- `docker events` for container start/die, with each container inspected as it
+- `docker events` for container start, die and exec, with each container inspected as it
   starts. `adapters/runners/harbor_audit.py` (stdlib only, no Harbor import)
   evaluates them; the core package does not import runner adapters.
 - A host TCP listener. A probe container on a fresh user-defined bridge must
@@ -93,7 +93,7 @@ pinned source and were confirmed against live `docker inspect` output.
 | capabilities | drop `ALL` | drop `ALL`, add `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | Harbor's root housekeeping (emptying the shared verifier log directory, fixing host ownership) ignores failures; without these, planted files could survive |
 | `no-new-privileges`, `init`, `pids_limit` | yes, 64 | yes, 128 | Processes are reaped and bounded |
 | `memswap_limit` | `${MEMORY}` | `${MEMORY}` | Harbor exports the declared memory; no extra swap |
-| `read_only` | yes | yes | Writable paths are image volumes (`/candidate`, `/solution`; `/candidate`, `/logs/artifacts`) because `docker cp` cannot write a read-only root or tmpfs; `/tmp` is a `noexec` tmpfs |
+| `read_only` | yes | yes | Writable paths are volumes (agent: `/candidate`, a named volume the trusted collector reads, and `/solution`; verifier: `/candidate`, `/logs/artifacts`) because `docker cp` cannot write a read-only root or tmpfs; `/tmp` is a `noexec` tmpfs |
 
 The verifier image sets `test.sh` and `check.py` executable at build time,
 because Harbor's runtime `chmod` silently fails on a read-only root. `test.sh`
@@ -168,11 +168,13 @@ worker host and an approved budget.
 
 ## Application tasks
 
-`scripts/harbor_apps.py` audits every trial it runs (oracle, nop, unsafe and both
-replays, per task) under v3, with one positive control and one host listener for
-the whole run, and fails unless all pass with zero trial connections. App limits
-come from the trusted verifier compose file. The candidate app adds one gap,
-`app_storage_unbounded`. Results are in APPLICATION_TASKS.md.
+`scripts/harbor_apps.py` audits every trial it runs (nine per task: oracle, nop,
+unsafe, both replays and the four extraction controls) under v4, with one
+positive control and one host listener for the whole run, and fails unless all
+pass with zero trial connections and exactly one app. App and collector limits
+(memory, CPU and PIDs) come from the trusted verifier and agent compose files.
+The app and collector add the gaps `app_storage_unbounded` and
+`collector_storage_unbounded`. Results are in APPLICATION_TASKS.md.
 
 ## Trusted artifact collection
 
@@ -182,7 +184,7 @@ on the host at upload, so a host directory it names is copied into the
 verifier, and a sparse file is streamed in full. Every task (the policy task
 and the three application tasks) therefore collects only through a trusted
 `collector` service in the agent's compose project, satisfying ARCHITECTURE.md
-runtime step 5:
+runtime step 5 for that submission artifact:
 
 1. The agent's `/candidate` is a named volume; the collector mounts it
    read-only at `/agent-candidate`.
@@ -199,14 +201,17 @@ runtime step 5:
 The collector runs as the agent's uid, so a file the agent saved as `0600` is
 still collected (and normalized to `0444`), while one it made unreadable to
 itself is rejected. It has no network or capabilities, a read-only root, 64 MiB
-without swap and 16 PIDs. Audit v4 checks all of that and, from `exec_start`
-events, that the collector was only exec'd into after the agent's container
-died. `scripts/harbor_apps.py` proves it per task with hostile controls (a
-symlink to a host canary directory, a 1 GiB sparse file and a FIFO, each a
-bound zero with no collected file and the canary absent from all trial output)
-and a valid `0600` app that passes. Harbor still uploads the agent's
-bind-mounted `/logs/artifacts` directory itself; see APPLICATION_TASKS.md
-limits.
+without swap and 16 PIDs. Audit v4 checks all of that against the compose
+declaration and, from `exec_start` events, that the collector was only exec'd
+into after the agent's container died. `scripts/harbor_apps.py` proves it for
+each application task with hostile controls: a symlink to a host canary
+directory, a 1 GiB sparse file and a FIFO each end in a bound zero with no
+collected file and the canary absent from all trial output, and a valid `0600`
+app passes. Each hostile script checks that its object is in place before
+printing a marker that acceptance requires. The policy task uses the
+byte-identical collector, covered by its unit tests and the tamper control.
+Harbor still uploads the agent's bind-mounted `/logs/artifacts` directory
+itself, unchecked; see APPLICATION_TASKS.md limits.
 
 ## Next bounded task
 

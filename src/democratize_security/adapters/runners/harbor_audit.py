@@ -239,15 +239,16 @@ def audit(
             raise AssertionError("Agent, verifier, app and collector share an image")
         # Candidate code may share only the network namespace: a shared PID or
         # IPC namespace would expose the verifier's processes and its nonce.
-        # The collector shares none with the agent.
-        for _, container in extra():
+        # Checked from both sides, so main joining a sidecar is caught too.
+        mains = [agent, verifier]
+        for container in mains + [c for _, c in extra()]:
             host = container["HostConfig"]
             if (
                 host.get("PidMode") not in {"", "private"}
                 or host.get("IpcMode") not in {"", "private", "shareable", "none"}
                 or host.get("UTSMode") not in {"", None}
             ):
-                raise AssertionError("app or collector shares a namespace")
+                raise AssertionError("A trial container shares a PID, IPC or UTS namespace")
 
     def ordering():
         agent, verifier = main(agent_project), main(verifier_project)
@@ -385,6 +386,7 @@ def audit(
             if (
                 host.get("Memory") != limits[role]["memory_mb"] * 1024 * 1024
                 or host.get("NanoCpus") != limits[role]["cpus"] * 1_000_000_000
+                or host.get("PidsLimit") != limits[role]["pids"]
             ):
                 raise AssertionError(f"{role} limits differ from its compose declaration")
 

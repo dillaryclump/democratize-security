@@ -235,8 +235,9 @@ No model calls, spending or hostile-candidate execution are authorized. Next:
 Closed the gap the application-task review confirmed: Harbor 0.24.0 copied the
 agent's artifact path to the host and into the verifier unchecked, resolving
 symlinks on the host and streaming sparse files in full. Every Harbor task
-(policy and application) now collects only through a trusted `collector`
-service in the agent's compose project (ARCHITECTURE.md runtime step 5):
+(policy and application) now collects its submission only through a trusted
+`collector` service in the agent's compose project (ARCHITECTURE.md runtime
+step 5, for that artifact):
 - The agent's `/candidate` is a named volume, which the collector mounts
   read-only.
 - After Harbor stops the agent's container, a `[[verifier.collect]]` hook runs
@@ -251,8 +252,9 @@ Audit policy v4 constrains the collector like a main container. From
 the agent's container died. See HARBOR_AUDIT.md.
 
 Local evidence (Docker 29.8.2, cgroup v1, root host):
-- Full suite with PostgreSQL 16 and the Docker worker tests: 278 passed and 1
-  skipped (the mode-000 case cannot apply as root; CI runs it). Ruff passes.
+- Full suite with PostgreSQL 16 and the Docker worker tests, final tree: 291
+  passed and 1 skipped (the mode-000 case cannot apply as root; CI runs it).
+  Ruff passes.
 - Policy task under v4:
   - oracle 1 / nop 0;
   - replays kept bundle hashes `6fb653ff…` and `34da710d…`, so collection
@@ -268,11 +270,37 @@ Local evidence (Docker 29.8.2, cgroup v1, root host):
 - A first local run failed in host acceptance on Harbor's list-shaped manifest.
   This was fixed, and `accept_rejected` gained offline tests.
 
-CI evidence for this change is pending. Remaining limits:
-- Harbor still uploads the agent's bind-mounted `/logs/artifacts` directory
-  itself.
+CI [run 38752494128](https://github.com/dillaryclump/democratize-security/actions/runs/38752494128)
+at `1d7258f` passed every job on the GitHub runner (uid 1001, cgroup v2). Each
+`harbor-apps` job ran all nine trials, including the hostile extraction
+controls, with nine passing v4 audits.
+
+An adversarial review (three reviewers, each finding challenged by a skeptic)
+found no way through the collector to unchecked bytes, host data or a pass. It
+confirmed the following, all now fixed:
+- v4 checked namespace sharing only from the collector or app side; it now
+  checks both directions.
+- A hostile control could pass if its script failed before creating its
+  object; each script now checks its object and prints a marker that
+  acceptance requires, alongside Harbor's exit code.
+- No test caught a dropped `O_NOFOLLOW`; a test now links to a small valid
+  file.
+- The audit only checked that a PID limit was set; it now compares app and
+  collector PID limits with their declarations.
+- Several docs claimed runtime step 5 without scoping it, or were stale.
+
+A local re-run with these fixes passed the v4 tamper audit and `invoice-read`'s
+nine trials and nine audits, each hostile script confirming its object was in
+place.
+
+Remaining limits:
+- Harbor itself still uploads the agent's bind-mounted `/logs/artifacts`
+  directory unchecked. Nothing reads it, so the impact is availability only,
+  but sparse files there expand in full and special files pass through. See
+  APPLICATION_TASKS.md limits.
 - Storage is bounded only by the host.
 
 No model calls, spending or hostile-candidate execution are authorized. Next:
-owner review of the M2 evidence, then a dedicated worker host and an approved
-budget before any agent runs.
+- close or bound the `/logs/artifacts` transfer;
+- owner review of the M2 evidence;
+- a dedicated worker host and an approved budget before any agent runs.

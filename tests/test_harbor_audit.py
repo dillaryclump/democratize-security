@@ -20,7 +20,7 @@ TRIAL = "rls-policy__AbC123"
 LIMITS = {
     "agent": {"cpus": 1, "memory_mb": 256},
     "verifier": {"cpus": 1, "memory_mb": 512},
-    "collector": {"cpus": 1, "memory_mb": 64},
+    "collector": {"cpus": 1, "memory_mb": 64, "pids": 16},
 }
 EGRESS = {"control_connections": 1, "trial_connections": 0}
 PROJECT = "com.docker.compose.project"
@@ -401,7 +401,7 @@ def test_declared_exec_users_cover_task_and_steps(tmp_path):
     assert declared_exec_users(toml) == [("agent", "root"), ("verifier", 0)]
 
 
-APP_LIMITS = {**LIMITS, "app": {"cpus": 1, "memory_mb": 256}}
+APP_LIMITS = {**LIMITS, "app": {"cpus": 1, "memory_mb": 256, "pids": 64}}
 
 
 def candidate_mount(volume, *, writable):
@@ -484,6 +484,7 @@ def test_app_container_shape_passes(observed_app, tmp_path):
         ("pid_shared", "separate_environments"),
         ("ipc_shared", "separate_environments"),
         ("uts_host", "separate_environments"),
+        ("verifier_joins_app", "separate_environments"),
         ("verifier_uid", "least_privilege"),
         ("named_verifier_user", "least_privilege"),
         ("root", "least_privilege"),
@@ -544,6 +545,8 @@ def test_app_boundary_violation_fails(observed_app, mutation, check):
         host["IpcMode"] = "container:verifier"
     elif mutation == "uts_host":
         host["UTSMode"] = "host"
+    elif mutation == "verifier_joins_app":
+        containers["verifier"]["HostConfig"]["IpcMode"] = "container:app"
     elif mutation == "verifier_uid":
         app["Config"]["User"] = "999:20001"
     elif mutation == "named_verifier_user":
@@ -622,8 +625,10 @@ def test_app_without_declared_limits_is_incomplete(observed_app):
         ("swap", "bounded_resources"),
         ("writable_root", "bounded_resources"),
         ("pid_shared", "separate_environments"),
+        ("agent_joins_collector", "separate_environments"),
         ("shared_image", "separate_environments"),
         ("in_verifier_project", "separate_environments"),
+        ("pids", "declared_limits"),
         ("exec_while_agent_ran", "agent_stopped_before_verifier"),
         ("never_exec", "agent_stopped_before_verifier"),
         ("privileged", "no_privilege"),
@@ -669,6 +674,11 @@ def test_collector_boundary_violation_fails(observed, mutation, check):
         host["ReadonlyRootfs"] = False
     elif mutation == "pid_shared":
         host["PidMode"] = "container:agent"
+    elif mutation == "agent_joins_collector":
+        # The reverse direction: the agent reads the collector's processes.
+        containers["agent"]["HostConfig"]["PidMode"] = "container:collector"
+    elif mutation == "pids":
+        host["PidsLimit"] = 1024
     elif mutation == "shared_image":
         collector["Image"] = containers["agent"]["Image"]
     elif mutation == "in_verifier_project":

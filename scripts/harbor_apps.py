@@ -20,6 +20,7 @@ import base64
 import json
 import os
 import secrets
+import shlex
 import shutil
 import sys
 
@@ -59,13 +60,23 @@ EVIDENCE_KEYS = {
 }
 MAX_APP_BYTES = 65536
 # Reviewed hostile solutions; {canary} is a host directory absent from the agent.
+# Each checks that its object is really in place, so a control cannot pass
+# merely because the script failed before creating it.
 EXTRACTION = {
-    "symlink": "rm -f /candidate/app.py\nln -s {canary} /candidate/app.py",
-    "sparse": "truncate -s 1G /candidate/app.py",
-    "fifo": "rm -f /candidate/app.py\nmkfifo /candidate/app.py",
+    "symlink": (
+        "rm -f /candidate/app.py\nln -s {canary} /candidate/app.py\ntest -L /candidate/app.py"
+    ),
+    "sparse": (
+        'truncate -s 1G /candidate/app.py\ntest "$(stat -c %s /candidate/app.py)" -eq 1073741824'
+    ),
+    "fifo": "rm -f /candidate/app.py\nmkfifo /candidate/app.py\ntest -p /candidate/app.py",
 }
 # A valid reference app saved as 0600, which the verifier user could not read.
-PRIVATE = "rm -f /candidate/app.py\ninstall -m 600 /solution/app.py /candidate/app.py"
+PRIVATE = (
+    "rm -f /candidate/app.py\ninstall -m 600 /solution/app.py /candidate/app.py\n"
+    'test "$(stat -c %a /candidate/app.py)" = 600'
+)
+MARKER = "extraction control in place"
 
 
 def expected_outcomes(task, control):
@@ -121,7 +132,7 @@ def prepare_extraction(task, destination, script):
     """Copy the trusted task with the reference app and a reviewed hostile solve.sh."""
     prepare_control(task, destination, (task / "solution/app.py").read_bytes())
     solve = destination / "solution/solve.sh"
-    solve.write_text(f"#!/bin/sh\nset -eu\n{script}\n")
+    solve.write_text(f"#!/bin/sh\nset -eu\n{script}\necho '{MARKER}'\n")
     solve.chmod(0o755)
 
 
@@ -139,6 +150,12 @@ def accept_rejected(job, nonce, secret):
         or os.path.lexists(trial / "verifier/reward.json")
     ):
         raise ValueError("hostile artifact did not end in a clean zero")
+    # Harbor records a failing solve.sh; the marker proves the object existed.
+    log = seal(trial / "agent", ["oracle.txt"])["files"][0]["content_base64"]
+    if os.path.lexists(trial / "agent/exit-code.txt") or MARKER not in base64.b64decode(log).decode(
+        errors="replace"
+    ):
+        raise ValueError("hostile solution did not put its artifact in place")
     if os.path.lexists(trial / "artifacts/app.py"):
         raise ValueError("collector let a rejected artifact through")
     # Harbor 0.24.0 writes the collection manifest as a list of entries.
@@ -211,7 +228,7 @@ def run_task(name, trials):
     extraction = {}
     for control, script in EXTRACTION.items():
         hostile = output / f"task-{control}"
-        prepare_extraction(task, hostile, script.format(canary=canary.resolve()))
+        prepare_extraction(task, hostile, script.format(canary=shlex.quote(str(canary.resolve()))))
         nonce = harbor_spike.run_trial(hostile, "oracle", output, control)
         trials.append((output / control, hostile, nonce))
         extraction[control] = accept_rejected(output / control, nonce, secret)

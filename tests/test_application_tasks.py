@@ -445,6 +445,8 @@ def rejected_trial(verifier, tmp_path, secret):
         {"source": "/candidate/app.py", "status": "failed", "service": "collector"},
     ]
     (trial / "artifacts/manifest.json").write_text(json.dumps(manifest))
+    (trial / "agent").mkdir()
+    (trial / "agent/oracle.txt").write_text("extraction control in place\n")
     (trial / "result.json").write_text(
         json.dumps(
             {
@@ -460,7 +462,17 @@ def rejected_trial(verifier, tmp_path, secret):
 
 
 @pytest.mark.parametrize(
-    "mutation", [None, "collected", "manifest_ok", "canary", "wrong_nonce", "reward_json"]
+    "mutation",
+    [
+        None,
+        "collected",
+        "manifest_ok",
+        "canary",
+        "wrong_nonce",
+        "reward_json",
+        "script_failed",
+        "no_marker",
+    ],
 )
 def test_rejected_artifact_acceptance(verifier, apps, tmp_path, mutation):
     secret = b"canary-0123456789abcdef"
@@ -478,6 +490,11 @@ def test_rejected_artifact_acceptance(verifier, apps, tmp_path, mutation):
         nonce = "f" * 64
     elif mutation == "reward_json":
         (trial / "verifier/reward.json").write_text('{"reward": 1}')
+    elif mutation == "script_failed":
+        # A hostile script that failed early proves nothing about collection.
+        (trial / "agent/exit-code.txt").write_text("1")
+    elif mutation == "no_marker":
+        (trial / "agent/oracle.txt").write_text("rm: cannot remove\n")
     if mutation is None:
         accepted = apps["accept_rejected"](trial.parent, nonce, secret)
         assert accepted == {"outcome": "invalid_submission", "reward": 0, "collected": False}
@@ -488,9 +505,12 @@ def test_rejected_artifact_acceptance(verifier, apps, tmp_path, mutation):
 
 def test_extraction_controls_are_reviewed_scripts(apps, tmp_path):
     assert set(apps["EXTRACTION"]) == {"symlink", "sparse", "fifo"}
+    # Every script checks its own hostile object before the marker.
+    assert "test -L" in apps["EXTRACTION"]["symlink"] and "test -p" in apps["EXTRACTION"]["fifo"]
     hostile = tmp_path / "task"
     apps["prepare_extraction"](task("invoice-read"), hostile, apps["PRIVATE"])
     solve = hostile / "solution/solve.sh"
     assert solve.stat().st_mode & 0o005 == 0o005
     assert "install -m 600 /solution/app.py /candidate/app.py" in solve.read_text()
+    assert solve.read_text().rstrip().endswith(f"echo '{apps['MARKER']}'")
     assert (hostile / "solution/app.py").read_bytes() == REFERENCE.read_bytes()

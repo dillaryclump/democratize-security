@@ -12,8 +12,8 @@ workloads are involved or authorized.
 
 Each task starts from the reference invoice API (FastAPI, PostgreSQL row-level
 security, fixed public bearer identities) with one endpoint removed. The agent
-edits `/candidate/app.py`; Harbor collects that path (see Limits for what its
-collection does not check).
+edits `/candidate/app.py`; Harbor collects only the trusted collector's checked
+copy of it (see Layout and Limits).
 
 | Task | Missing endpoint | Reviewed unsafe control |
 | --- | --- | --- |
@@ -235,11 +235,18 @@ evidence of record for the final rules.
   the collector's checked copy, and `run.py`'s own checks are a second line.
   The collector depends on Harbor stopping the agent's container before
   sidecar collection; audit v4 verifies that from Docker events.
-- Harbor also uploads the agent-written `/logs/artifacts` directory, which is
-  outside the collector's reach. An agent
-  can leave files there that a non-root controller (CI's uid 1001) cannot read,
-  which turns the trial into a verifier-setup exception instead of a bound zero.
-  Host acceptance rejects any exception. Scoring must count a post-agent
-  verifier exception as a failure, never exclude or retry it.
+- Harbor also uploads the agent-written `/logs/artifacts` directory (a host
+  bind mount, outside the collector's reach) into the verifier, unchecked and
+  before the verifier timeout starts. Nothing there is ever read, so the
+  impact is availability only, but:
+  - a sparse file there is expanded in full into the verifier's Docker volume,
+    and Harbor's fallback buffers the whole archive in memory;
+  - symlinks and FIFOs arrive in the verifier as-is (links are not followed);
+  - files a non-root controller (CI's uid 1001) cannot read turn the trial into
+    a verifier-setup exception instead of a bound zero.
+
+  Host acceptance rejects any exception, and scoring must count a post-agent
+  verifier exception as a failure, never exclude or retry it. Close or bound
+  this transfer before untrusted agents run.
 - One daemon per run, containers sharing the host kernel. Model-generated
   candidates need a dedicated worker host and an approved budget.

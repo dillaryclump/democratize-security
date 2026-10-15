@@ -66,7 +66,7 @@ The spike has no recovery controller, adversarial containment proof, private tes
 production identity, or independent application HTTP assessment. A killed host
 process may require container cleanup; use disposable runners.
 
-Next: retain the sealed policy replay regression and the v3 boundary audit. The
+Next: retain the sealed policy replay regression and the v4 boundary audit. The
 read/list/export application tasks now run under the hardened layout with the
 independent HTTP/database verifier; see APPLICATION_TASKS.md for their
 fresh-replay evidence. Every task now collects its artifact through a trusted

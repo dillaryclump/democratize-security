@@ -75,7 +75,9 @@ def test_valid_file_is_copied_read_only(tmp_path):
         collect(str(source), str(target), 64)
 
 
-@pytest.mark.parametrize("kind", ["missing", "symlink", "directory", "fifo", "hardlink", "large"])
+@pytest.mark.parametrize(
+    "kind", ["missing", "symlink", "symlink_to_file", "directory", "fifo", "hardlink", "large"]
+)
 def test_hostile_paths_are_rejected_without_output(tmp_path, kind):
     source, target = tmp_path / "app.py", tmp_path / "out.py"
     outside = tmp_path / "outside"
@@ -83,6 +85,10 @@ def test_hostile_paths_are_rejected_without_output(tmp_path, kind):
     (outside / "secret").write_text("host data")
     if kind == "symlink":
         source.symlink_to(outside)
+    elif kind == "symlink_to_file":
+        # A valid small file behind a link: only O_NOFOLLOW rejects it.
+        (outside / "small.py").write_text("x = 1\n")
+        source.symlink_to(outside / "small.py")
     elif kind == "directory":
         source.mkdir()
     elif kind == "fifo":
