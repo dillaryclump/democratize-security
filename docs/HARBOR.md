@@ -69,8 +69,9 @@ process may require container cleanup; use disposable runners.
 Next: retain the sealed policy replay regression and the v3 boundary audit. The
 read/list/export application tasks now run under the hardened layout with the
 independent HTTP/database verifier; see APPLICATION_TASKS.md for their
-fresh-replay evidence and for the next gate, a trusted artifact collector.
-Establish the dedicated-host policy before model execution. Do not infer M2
+fresh-replay evidence. Every task now collects its artifact through a trusted
+collector (HARBOR_AUDIT.md, Trusted artifact collection). Establish the
+dedicated-host policy before model execution. Do not infer M2
 completion from an oracle reward of 1.
 
 Pinned upstream contracts:

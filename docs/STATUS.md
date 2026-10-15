@@ -229,3 +229,50 @@ No model calls, spending or hostile-candidate execution are authorized. Next:
   files and bounds size before Harbor's transfer (ARCHITECTURE.md step 5);
 - owner review of the M2 evidence;
 - a dedicated worker host and an approved budget before any agent runs.
+
+## Trusted artifact collector (2026-10-15)
+
+Closed the gap the application-task review confirmed: Harbor 0.24.0 copied the
+agent's artifact path to the host and into the verifier unchecked, resolving
+symlinks on the host and streaming sparse files in full. Every Harbor task
+(policy and application) now collects only through a trusted `collector`
+service in the agent's compose project (ARCHITECTURE.md runtime step 5):
+- The agent's `/candidate` is a named volume, which the collector mounts
+  read-only.
+- After Harbor stops the agent's container, a `[[verifier.collect]]` hook runs
+  `collect.py`. It requires a regular, singly linked file within the size bound
+  (checked before reading) and writes a fresh `0444` copy.
+- The only artifact entry names `service = "collector"`, so only that copy
+  moves through the host. A rejection leaves no file and is graded as a missing
+  submission.
+
+Audit policy v4 constrains the collector like a main container. From
+`exec_start` events, it requires that every exec into the collector came after
+the agent's container died. See HARBOR_AUDIT.md.
+
+Local evidence (Docker 29.8.2, cgroup v1, root host):
+- Full suite with PostgreSQL 16 and the Docker worker tests: 278 passed and 1
+  skipped (the mode-000 case cannot apply as root; CI runs it). Ruff passes.
+- Policy task under v4:
+  - oracle 1 / nop 0;
+  - replays kept bundle hashes `6fb653ff…` and `34da710d…`, so collection
+    preserves the bytes;
+  - the tamper audit passed 10/10, the forgery was discarded and the genuine
+    reward was 0.
+- `invoice-read`: 9 trials, every outcome exactly as reviewed, and 9/9 v4
+  audits with the collector observed and zero egress.
+  - The symlink to a host canary directory, the 1 GiB sparse file and the FIFO
+    each ended in nonce-bound `invalid_submission`, with no collected file and
+    the canary secret in no trial output. The output tree stayed at 4.1 MB.
+  - A valid `0600` app passed every check.
+- A first local run failed in host acceptance on Harbor's list-shaped manifest.
+  This was fixed, and `accept_rejected` gained offline tests.
+
+CI evidence for this change is pending. Remaining limits:
+- Harbor still uploads the agent's bind-mounted `/logs/artifacts` directory
+  itself.
+- Storage is bounded only by the host.
+
+No model calls, spending or hostile-candidate execution are authorized. Next:
+owner review of the M2 evidence, then a dedicated worker host and an approved
+budget before any agent runs.

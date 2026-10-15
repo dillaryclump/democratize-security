@@ -1,6 +1,6 @@
 # Harbor worker boundary audit
 
-Status: M2 prerequisite, audit policy `harbor-docker-boundary-v3`. This records
+Status: M2 prerequisite, audit policy `harbor-docker-boundary-v4`. This records
 what one trusted Docker daemon actually configured for one reviewed, model-free
 Harbor 0.24.0 trial. It is not a container-escape proof and does not approve
 hostile or model-generated candidates. v3 is v2 plus rules for the application
@@ -8,7 +8,10 @@ tasks' candidate `app` container ([APPLICATION_TASKS.md](APPLICATION_TASKS.md)).
 For the policy task, which has no app, it applies v2's rules, with one addition:
 every verifier-project container, Harbor's sidecar included, must have an
 observed start event after the agent stopped. The named candidate volume is
-admitted only when an app is observed.
+admitted only when an app is observed. v4 adds the agent-side trusted
+`collector` ([Trusted artifact collection](#trusted-artifact-collection)), held
+to the same standards as main containers, and requires that it extracted only
+after the agent's container died.
 
 ## Run
 
@@ -55,16 +58,16 @@ Acceptance requires all of:
 
 | Check | Requirement |
 | --- | --- |
-| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus, in the verifier project only, at most one `app`; agent, verifier and app images all differ; the app shares no PID, IPC or UTS namespace; every started trial container was inspected |
-| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts |
+| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus at most one `collector` in the agent project and one `app` in the verifier project; agent, verifier, app and collector images all differ; neither app nor collector shares a PID, IPC or UTS namespace; every started trial container was inspected |
+| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts; v4: at least one exec into the collector, and every one after that `die`, so extraction happened only after the worker stopped |
 | `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
-| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write, and its only tmpfs is a `noexec` `/tmp`; no other named volume anywhere |
-| `declared_limits` | Memory and CPU equal `task.toml`; v3: the app's equal its compose declaration (missing declaration is incomplete) |
-| `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace); v3: the app joins only the verifier main's namespace (`container:<main id>`), so it has loopback only |
+| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write, and its only tmpfs is a `noexec` `/tmp`; v4: with a collector present, the agent main mounts the local `<agent project>_candidate` volume read-write at `/candidate` and the collector mounts it read-only at `/agent-candidate`, plus its own image-declared output volume, nothing else and no tmpfs; no other named volume anywhere |
+| `declared_limits` | Memory and CPU equal `task.toml`; the app's and collector's equal their compose declarations (a missing declaration is incomplete) |
+| `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace); v3: the app joins only the verifier main's namespace (`container:<main id>`), so it has loopback only; v4: the collector uses `network_mode: none` |
 | `no_observed_egress` | Positive control observed; no trial connection reached the host |
-| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app none; the last `no-new-privileges` option is true; the agent and app have explicit `uid:gid` users different from the controller's, and the app's uid differs from the verifier's, which must then be numeric; task.toml sets no exec user |
-| `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem, for main containers and the app |
-| `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration, the app's included |
+| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app and collector none; the last `no-new-privileges` option is true; the agent, app and collector have explicit `uid:gid` users different from the controller's, and the app's uid differs from the verifier's, which must then be numeric; task.toml sets no exec user |
+| `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem, for main containers, the app and the collector |
+| `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration, the app's and collector's included |
 
 Missing containers, events, the positive control or the nonce yield
 `incomplete`, never pass. Evidence stores trial-relative mount sources, not host
@@ -171,7 +174,42 @@ the whole run, and fails unless all pass with zero trial connections. App limits
 come from the trusted verifier compose file. The candidate app adds one gap,
 `app_storage_unbounded`. Results are in APPLICATION_TASKS.md.
 
+## Trusted artifact collection
+
+Harbor 0.24.0 copies each artifact path out of the agent container to the host
+and later into the verifier, with no type or size check: a symlink is resolved
+on the host at upload, so a host directory it names is copied into the
+verifier, and a sparse file is streamed in full. Every task (the policy task
+and the three application tasks) therefore collects only through a trusted
+`collector` service in the agent's compose project, satisfying ARCHITECTURE.md
+runtime step 5:
+
+1. The agent's `/candidate` is a named volume; the collector mounts it
+   read-only at `/agent-candidate`.
+2. After the agent's work, Harbor stops the agent's `main` container (separate
+   verifier mode), then runs the task's `[[verifier.collect]]` hook in the
+   collector: `collect.py` opens the one allowlisted path with `O_NOFOLLOW`
+   and `O_NONBLOCK`, requires a regular, singly linked file whose size is
+   within the task's bound (4096 bytes for `policy.json`, 65536 for `app.py`)
+   before reading, and writes a fresh `0444` copy into its own volume.
+3. The task's only artifact entry names `service = "collector"`, so Harbor
+   moves only that checked copy through the host. Anything rejected leaves no
+   file; the verifier then grades a missing submission, a bound zero.
+
+The collector runs as the agent's uid, so a file the agent saved as `0600` is
+still collected (and normalized to `0444`), while one it made unreadable to
+itself is rejected. It has no network or capabilities, a read-only root, 64 MiB
+without swap and 16 PIDs. Audit v4 checks all of that and, from `exec_start`
+events, that the collector was only exec'd into after the agent's container
+died. `scripts/harbor_apps.py` proves it per task with hostile controls (a
+symlink to a host canary directory, a 1 GiB sparse file and a FIFO, each a
+bound zero with no collected file and the canary absent from all trial output)
+and a valid `0600` app that passes. Harbor still uploads the agent's
+bind-mounted `/logs/artifacts` directory itself; see APPLICATION_TASKS.md
+limits.
+
 ## Next bounded task
 
-Keep this audit and the sealed replays as regressions. Model-generated
-candidates still need a dedicated worker host and an approved budget.
+Keep this audit, the hostile extraction controls and the sealed replays as
+regressions. Model-generated candidates still need a dedicated worker host and
+an approved budget.

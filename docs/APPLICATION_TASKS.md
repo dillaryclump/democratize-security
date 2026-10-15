@@ -34,7 +34,7 @@ uv sync --locked --group harbor
 uv run --locked --group harbor python scripts/harbor_apps.py invoice-read
 ```
 
-Pass one or more task names (default: all three). Per task, five finite trials
+Pass one or more task names (default: all three). Per task, nine finite trials
 with no retries, each bounded to 600 seconds. Existing
 `.research/harbor-apps/<task>` outputs cause refusal. Use a disposable Linux
 Docker host: the run briefly listens on a random host TCP port. CI job
@@ -50,6 +50,9 @@ The agent environment is the starter app, the locked application dependencies
 (`app-requirements.txt`, hash-checked) and the same reviewed compose hardening as
 the policy task: `network_mode: none`, uid `10001:10001`, no capabilities,
 read-only root. The oracle `solve.sh` copies the reference app into place.
+`/candidate` is a named volume that the trusted `collector` service reads after
+Harbor stops the agent's container; only its checked copy of `app.py` leaves
+the agent environment (see HARBOR_AUDIT.md, Trusted artifact collection).
 
 The separate verifier has two services, built from `tests/`:
 
@@ -101,10 +104,11 @@ restricted role. The agent container is stopped before any of this starts.
 the app started, coverage, outcome, every check's outcome, fixed failure details
 and the reward. It carries an HMAC-SHA256 over all other fields, keyed with the
 run's nonce (`harbor run --ve`), and is written with `O_EXCL|O_NOFOLLOW`. The
-reward is 1 only for a complete pass. Outcomes `invalid_submission`,
-`unreadable_submission` (a valid file the verifier user cannot read, such as
-one saved as 0600, since Harbor keeps the agent's mode bits) and
-`app_not_started` are bound zeros, not infrastructure errors.
+reward is 1 only for a complete pass. Outcomes `invalid_submission` (including
+no submission, when the collector rejected the agent's path),
+`unreadable_submission` (a file the verifier user cannot read; the collector's
+`0444` copy normally prevents it) and `app_not_started` are bound zeros, not
+infrastructure errors.
 
 Host acceptance (`accept_app`) builds on the policy task's checks. It requires
 one clean separate-verifier trial, no `reward.json`, valid nonce-bound evidence
@@ -132,13 +136,23 @@ replayed with `prepare_replay` ([SEALED_REPLAY.md](SEALED_REPLAY.md)). Each
 replay is a fresh task holding the sealed bytes and every trusted verifier file,
 with the `nop` agent. It must reproduce the same outcomes for the same bytes.
 
+Four extraction controls then exercise the collector with the reference app in
+place: a `solve.sh` that replaces `app.py` with a symlink to a host canary
+directory (absent from the container), a 1 GiB sparse file or a FIFO must each
+end in a clean reward 0 with no collected `app.py`, a `failed` collector entry
+in Harbor's manifest, nonce-bound `invalid_submission` evidence and the canary's
+random secret in no trial output. A valid reference app saved as `0600` must
+pass every check. All nine trials per task are audited.
+
 ## Consistency rules
 
 Harbor needs self-contained task directories, so verifier files are copied.
 `tests/test_application_tasks.py` keeps every copy honest:
 
 - Each task holds exactly the reviewed files, and every verifier file is
-  identical across the three tasks.
+  identical across the three tasks. The collector, its Dockerfile and the agent
+  compose file are identical across all four Harbor tasks
+  (`tests/test_collector.py`).
 - `verify.py` and `fixture.py` equal their `src` modules, and `solution/app.py`
   equals the reference app.
 - Each starter is the reference minus exactly its endpoint; each unsafe control
@@ -216,16 +230,13 @@ evidence of record for the final rules.
 - Debian's `python3` and PostgreSQL packages remain mutable; audits record built
   image IDs.
 - Storage stays bounded only by the host for volumes and writable layers.
-- Harbor 0.24.0 moves the artifact through the host before `run.py` sees it,
-  and checks nothing on the way. A symlink at `/candidate/app.py` is resolved
-  on the host at upload, so a host directory it names is copied into the
-  verifier volume. Nothing bounds the size, so a sparse file can fill the host
-  disk. `run.py`'s checks (regular file, no symlink, 65536 bytes) are therefore
-  a second line, not the extraction boundary that ARCHITECTURE.md step 5
-  requires. The same holds for the policy task. Close this, for example with a
-  trusted collector that runs after the agent stops, before any untrusted
-  agent runs.
-- Harbor also uploads the agent-written `/logs/artifacts` directory. An agent
+- Harbor 0.24.0 itself moves artifacts through the host unchecked. The
+  trusted collector closes this for the submission: Harbor only ever transfers
+  the collector's checked copy, and `run.py`'s own checks are a second line.
+  The collector depends on Harbor stopping the agent's container before
+  sidecar collection; audit v4 verifies that from Docker events.
+- Harbor also uploads the agent-written `/logs/artifacts` directory, which is
+  outside the collector's reach. An agent
   can leave files there that a non-root controller (CI's uid 1001) cannot read,
   which turns the trial into a verifier-setup exception instead of a bound zero.
   Host acceptance rejects any exception. Scoring must count a post-agent

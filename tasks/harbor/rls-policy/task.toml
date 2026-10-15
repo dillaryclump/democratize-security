@@ -1,5 +1,5 @@
 schema_version = "1.4"
-artifacts = [{ source = "/candidate/policy.json", destination = "policy.json" }]
+artifacts = [{ source = "/candidate/policy.json", destination = "policy.json", service = "collector" }]
 
 [task]
 name = "democratize-security/rls-policy"
@@ -23,3 +23,9 @@ cpus = 1
 memory_mb = 512
 storage_mb = 1024
 network_mode = "no-network"
+
+# Runs in the collector after Harbor has stopped the agent's container.
+[[verifier.collect]]
+service = "collector"
+command = "python3 -I /opt/collect.py /agent-candidate/policy.json /candidate/policy.json 4096"
+timeout_sec = 30

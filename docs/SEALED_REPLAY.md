@@ -24,7 +24,8 @@ The first two grades are diagnostic. Their captured policy files are sealed by
 the existing bounded artifact module. Replay loads and validates those bundles
 before creating any task. Only the single `policy.json` file, at most 4096 bytes,
 is accepted. A fresh task copies trusted verifier/configuration files, including
-both reviewed compose files, so replays run with the same container hardening.
+both reviewed compose files and the trusted artifact collector, so replays run
+with the same container hardening and collect the replayed bytes the same way.
 It puts only sealed policy bytes plus a fixed Dockerfile in the agent build
 context.
 It never copies the original solution or consults the original candidate file.

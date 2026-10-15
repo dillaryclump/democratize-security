@@ -1,6 +1,6 @@
 # System architecture
 
-Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. Three application tasks (read, list/search, CSV) run model-free under that layout, with candidate code isolated from the verifier and sealed replays; see APPLICATION_TASKS.md. Trusted artifact extraction (runtime step 5) is not yet implemented. See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
+Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. Three application tasks (read, list/search, CSV) run model-free under that layout, with candidate code isolated from the verifier and sealed replays; see APPLICATION_TASKS.md. Runtime step 5 is implemented for these Harbor tasks by a trusted collector that extracts the one allowlisted artifact after the agent's container stops; see HARBOR_AUDIT.md. See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
 
 ## Three separate authority domains
 
@@ -31,7 +31,7 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | Benchmark adapters | future `adapters/benchmarks/` | Prepare/inject/extract/normalize; preserve original scoring and task provenance |
 | Proposer adapters | future `adapters/proposers/` | Manual candidate initially, GEPA later; development feedback only |
 | Security integration | `candidates/` | Prompts/templates/helpers/policies that the product ships; cannot define authoritative grades |
-| Verifier | `src/democratize_security/verification/` | Public fixed-fixture HTTP/database checks implemented and bound to sealed artifacts in the Harbor tasks; protected verification and trusted extraction (runtime step 5) remain future work |
+| Verifier | `src/democratize_security/verification/` | Public fixed-fixture HTTP/database checks implemented and bound to sealed artifacts in the Harbor tasks, which collect them through a trusted collector (runtime step 5); protected verification remains future work |
 | Reporting | future `reports/` | Aggregate all scheduled outcomes, costs, uncertainty and limitations |
 
 Do not create empty plugin classes for every hypothetical future integration. Add a module when its first concrete behavior and tests are implemented.

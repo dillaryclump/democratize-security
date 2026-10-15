@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -32,6 +33,8 @@ TRUSTED_FILES = (
     "instruction.md",
     "environment/Dockerfile",
     "environment/docker-compose.yaml",
+    "environment/collect.py",
+    "environment/collector.Dockerfile",
     "tests/Dockerfile",
     "tests/docker-compose.yaml",
     "tests/test.sh",
@@ -100,6 +103,17 @@ python3 -I - <<'PROBE'
 PROBE
 exit 0
 """
+
+
+def service_limits(compose, service):
+    """A non-main service's declared limits, read from a trusted compose file."""
+    import yaml
+
+    declared = yaml.safe_load(compose.read_text())["services"][service]
+    memory = re.fullmatch(r"(\d+)m", str(declared["mem_limit"]))
+    if not memory or declared["memswap_limit"] != declared["mem_limit"]:
+        raise ValueError(f"{service} memory must be declared in MiB without swap")
+    return {"cpus": declared["cpus"], "memory_mb": int(memory.group(1))}
 
 
 def prepare_tamper(destination, port):
@@ -273,7 +287,10 @@ def main():
         trial,
         list(watcher.inspections.values()),
         watcher.events,
-        declared_limits(task / "task.toml"),
+        {
+            **declared_limits(task / "task.toml"),
+            "collector": service_limits(task / "environment/docker-compose.yaml", "collector"),
+        },
         {"control_connections": control_connections, "trial_connections": trial_connections},
         nonce,
         os.getuid(),

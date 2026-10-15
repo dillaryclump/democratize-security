@@ -9,7 +9,9 @@ Policy v3 also admits the application tasks' optional verifier-side `app`
 service, where candidate code runs: it must join only the verifier main's
 loopback-only namespace, mount only the project's candidate volume read-only
 (plus a `noexec` `/tmp` tmpfs), and be unprivileged and bounded like the main
-containers.
+containers. Policy v4 admits the agent-side trusted `collector`, which must be
+isolated and bounded the same way, read the agent's candidate volume only
+read-only, and be exec'd into only after the agent's container has died.
 """
 
 import json
@@ -17,7 +19,7 @@ import re
 import tomllib
 from pathlib import Path
 
-POLICY = "harbor-docker-boundary-v3"
+POLICY = "harbor-docker-boundary-v4"
 SIDECAR = "harbor-docker-egress-control-sidecar"
 SIDECAR_CAPS = {"CAP_NET_ADMIN", "CAP_NET_RAW"}
 # The verifier keeps only what Harbor's root housekeeping (emptying the shared
@@ -26,12 +28,17 @@ ROLE_CAPS = {
     "agent": set(),
     "verifier": {"CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"},
     "app": set(),
+    "collector": set(),
 }
 TMPFS = {"/tmp"}
 # The candidate-runtime service of the application tasks' separate verifier and
 # the named volume (`<verifier project>_candidate`) it shares with main.
 APP = "app"
 CANDIDATE = "/candidate"
+# The agent-side trusted collector and where it sees the agent's candidate
+# volume (`<agent project>_candidate`), read-only.
+COLLECTOR = "collector"
+AGENT_CANDIDATE = "/agent-candidate"
 # Harbor-owned log binds, by container target, relative to the trial directory.
 AGENT_BINDS = {
     "/logs/agent": "agent",
@@ -186,9 +193,17 @@ def audit(
             by_project[project].append(container)
 
     candidate_volume = f"{verifier_project}_candidate"
+    agent_volume = f"{agent_project}_candidate"
 
     def apps() -> list[dict]:
         return [c for c in by_project[verifier_project] if _labels(c)[1] == APP]
+
+    def collectors() -> list[dict]:
+        return [c for c in by_project[agent_project] if _labels(c)[1] == COLLECTOR]
+
+    def extra() -> list[tuple[str, dict]]:
+        """Non-main containers held to main-container standards."""
+        return [("app", c) for c in apps()] + [("collector", c) for c in collectors()]
 
     def main(project: str) -> dict:
         found = [c for c in by_project[project] if _labels(c)[1] == "main"]
@@ -211,24 +226,28 @@ def audit(
         }
         if started - {c["Id"] for c in inspections}:
             raise Unavailable("A trial container started without an observed inspection")
-        allowed = {agent_project: {"main", SIDECAR}, verifier_project: {"main", SIDECAR, APP}}
+        allowed = {
+            agent_project: {"main", SIDECAR, COLLECTOR},
+            verifier_project: {"main", SIDECAR, APP},
+        }
         for project in by_project:
             services = [_labels(c)[1] for c in by_project[project]]
             if sorted(set(services)) != sorted(services) or not set(services) <= allowed[project]:
                 raise AssertionError("Unexpected or duplicate compose services in trial")
-        images = [agent["Image"], verifier["Image"], *(c["Image"] for c in apps())]
+        images = [agent["Image"], verifier["Image"], *(c["Image"] for _, c in extra())]
         if len(set(images)) != len(images):
-            raise AssertionError("Agent, verifier and app containers share an image")
+            raise AssertionError("Agent, verifier, app and collector share an image")
         # Candidate code may share only the network namespace: a shared PID or
         # IPC namespace would expose the verifier's processes and its nonce.
-        for container in apps():
+        # The collector shares none with the agent.
+        for _, container in extra():
             host = container["HostConfig"]
             if (
                 host.get("PidMode") not in {"", "private"}
                 or host.get("IpcMode") not in {"", "private", "shareable", "none"}
                 or host.get("UTSMode") not in {"", None}
             ):
-                raise AssertionError("app shares a namespace beyond the verifier's network")
+                raise AssertionError("app or collector shares a namespace")
 
     def ordering():
         agent, verifier = main(agent_project), main(verifier_project)
@@ -251,8 +270,20 @@ def audit(
             for container in by_project[verifier_project]
             for moment in moments(container, "start")
         ]
-        if not (max(moments(agent, "start")) < max(moments(agent, "die")) < min(verifier_starts)):
+        agent_stopped = max(moments(agent, "die"))
+        if not (max(moments(agent, "start")) < agent_stopped < min(verifier_starts)):
             raise AssertionError("Agent container was running when verification started")
+        # Extraction happens only after the worker stopped: every exec into the
+        # collector (the collect hook, Harbor's file probes) follows the die.
+        for container in collectors():
+            execs = [
+                int(e["timeNano"])
+                for e in events
+                if str(e.get("Action", "")).startswith("exec_start")
+                and e.get("Actor", {}).get("ID") == container["Id"]
+            ]
+            if not execs or min(execs) <= agent_stopped:
+                raise AssertionError("Collector did not extract only after the agent stopped")
 
     def privilege():
         for project in by_project:
@@ -280,6 +311,7 @@ def audit(
                 service = _labels(container)[1]
                 is_main = service == "main"
                 is_app = project == verifier_project and service == APP
+                is_collector = project == agent_project and service == COLLECTOR
                 tmpfs = container["HostConfig"].get("Tmpfs") or {}
                 if not set(tmpfs) <= (TMPFS if is_main or is_app else set()) or any(
                     _last_flag(options.split(","), {"exec", "noexec"}) != "noexec"
@@ -303,6 +335,24 @@ def audit(
                         # Only the verifier writes; candidate code reads.
                         shared[service] = mount["Name"]
                         continue
+                    # Only with a collector present; it reads what the agent wrote.
+                    if (
+                        project == agent_project
+                        and collectors()
+                        and mount["Type"] == "volume"
+                        and mount.get("Name") == agent_volume
+                        and mount.get("Driver") == "local"
+                        and (
+                            (is_main and mount["Destination"] == CANDIDATE and mount["RW"] is True)
+                            or (
+                                is_collector
+                                and mount["Destination"] == AGENT_CANDIDATE
+                                and mount["RW"] is False
+                            )
+                        )
+                    ):
+                        shared[f"agent_{service}"] = mount["Name"]
+                        continue
                     if is_app:
                         raise AssertionError("Unexpected mount in app container")
                     if mount["Type"] == "volume" and mount["Destination"] in declared:
@@ -315,8 +365,10 @@ def audit(
                     binds[mount["Destination"]] = _relative(mount["Source"], trial_dir)
                 if is_main and binds != expected[project]:
                     raise AssertionError(f"{roles[project]} binds differ from Harbor log dirs")
-        if apps() and set(shared) != {"main", APP}:
+        if apps() and {"main", APP} - set(shared):
             raise AssertionError("app and verifier do not share only the candidate volume")
+        if collectors() and {"agent_main", "agent_collector"} - set(shared):
+            raise AssertionError("collector does not read only the agent's candidate volume")
 
     def resources():
         for project, role in roles.items():
@@ -326,15 +378,15 @@ def audit(
                 or host.get("NanoCpus") != limits[role]["cpus"] * 1_000_000_000
             ):
                 raise AssertionError(f"{role} limits differ from task configuration")
-        for container in apps():
-            if "app" not in limits:
-                raise Unavailable("No declared app limits")
+        for role, container in extra():
+            if role not in limits:
+                raise Unavailable(f"No declared {role} limits")
             host = container["HostConfig"]
             if (
-                host.get("Memory") != limits["app"]["memory_mb"] * 1024 * 1024
-                or host.get("NanoCpus") != limits["app"]["cpus"] * 1_000_000_000
+                host.get("Memory") != limits[role]["memory_mb"] * 1024 * 1024
+                or host.get("NanoCpus") != limits[role]["cpus"] * 1_000_000_000
             ):
-                raise AssertionError("app limits differ from its compose declaration")
+                raise AssertionError(f"{role} limits differ from its compose declaration")
 
     def network():
         # Harbor's sidecar namespace still allows DNS and ICMP; require none.
@@ -346,6 +398,9 @@ def audit(
         for container in apps():
             if container["HostConfig"].get("NetworkMode") != f"container:{verifier}":
                 raise AssertionError("app is not confined to the verifier's namespace")
+        for container in collectors():
+            if container["HostConfig"].get("NetworkMode") != "none":
+                raise AssertionError("collector has a network namespace")
 
     def egress_observed():
         if egress.get("control_connections", 0) < 1:
@@ -359,14 +414,14 @@ def audit(
             # of the container user observed below.
             raise AssertionError("task.toml overrides the audited container user")
         observed = [(role, main(project)) for project, role in roles.items()]
-        for role, container in observed + [("app", c) for c in apps()]:
+        for role, container in observed + extra():
             host = container["HostConfig"]
             user = container["Config"].get("User") or ""
             if _is_root(user):
                 raise AssertionError(f"{role} container runs as root")
             # An owner may chmod a directory without capabilities, so an agent
             # sharing the host uid could lock the verifier log directory.
-            if role in {"agent", "app"} and (
+            if role in {"agent", "app", "collector"} and (
                 not re.fullmatch(r"\d+:\d+", user) or int(user.split(":")[0]) == host_uid
             ):
                 raise AssertionError(f"{role} needs an explicit uid:gid other than the host's")
@@ -392,7 +447,7 @@ def audit(
 
     def bounded():
         observed = [(role, main(project)) for project, role in roles.items()]
-        for role, container in observed + [("app", c) for c in apps()]:
+        for role, container in observed + extra():
             host = container["HostConfig"]
             if (
                 type(host.get("PidsLimit")) is not int
@@ -444,6 +499,8 @@ def audit(
             service = _labels(container)[1]
             if service == APP and project == verifier_project:
                 role = "app"
+            elif service == COLLECTOR and project == agent_project:
+                role = "collector"
             elif service != "main":
                 role = f"{roles[project]}_sidecar"
             else:
