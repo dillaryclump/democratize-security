@@ -1,10 +1,59 @@
 # Persistence and crash recovery contract
 
-Status: proposed design for M3, issue #21; **not implemented**. Based on main
+Status: proposed design for M3, issue #21; **only offline plan import is implemented
+on this branch**, as described below. The recovery engine remains unimplemented. Based on main
 `1124a0c`. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
 This contract does not approve model execution or change campaign schema v1,
 artifact schema v1, verifier protocol v3, or existing scores. M0/M2 owner
 acceptance, dedicated worker isolation and a finite approved budget remain gates.
+
+## Implemented offline plan ledger (slice 1a)
+
+`democratize_security.store.PlanStore` imports a campaign through the existing
+planner and commits its full plan, all ordered trial records and one immutable
+`planned` event per trial in a single transaction. A matching re-import is a
+validated no-op. Reopening validates schema, database integrity, foreign keys,
+canonical plan identities, complete trial coverage and import-event coverage.
+Snapshots retain `execution_enabled: false` and return independent Python values.
+
+Use as a Python context manager with an existing trusted local directory:
+
+```python
+from pathlib import Path
+from democratize_security.contracts import load_campaign
+from democratize_security.store import PlanStore
+
+campaign = load_campaign(Path("campaigns/development.example.json"))
+# ledger_directory must already exist durably under controller ownership.
+with PlanStore(ledger_directory) as store:
+    saved_plan = store.import_campaign(campaign)
+    same_plan = store.snapshot(saved_plan["campaign_id"])
+```
+
+The API fixes filenames to `ledger.sqlite3` and `ledger.lock`, uses a nonblocking
+POSIX flock for the context lifetime, creates files with private permissions,
+rejects symlink/hardlinked database or lock files, requires SQLite FULL sync,
+DELETE journaling and foreign keys, and syncs the parent before returning from
+open. Do not rename, unlink or replace the live directory/lock/database. Never
+share one open instance across forked processes or use network filesystems.
+Close the context to release ownership. Unknown versions or schema differences
+refuse to open; there is no migration. Plans are limited to 16 MiB canonical JSON.
+
+This first schema intentionally has only campaigns, immutable planned trials
+and import events at sequence zero. It has no controller generation, attempt
+state transitions, general event append API, reservations, evidence references,
+result acceptance, recovery dispatcher, backup tool or CLI. Those additions
+require an explicit store-version migration and further tests; the wider tables
+and transitions below remain proposals. A complete plan snapshot is not a
+successful experiment or an execution authorization. The lock/SQL triggers protect
+cooperating code, not an owner editing files. No sensitive final cases belong here.
+
+Tests kill a subprocess with `os._exit` immediately before or after import commit,
+reopen the store and require none/all of the scheduled records. Other tests inject
+a mid-import SQL failure, hold the lock from another process, corrupt stored
+rows/schema, reject writes to immutable records, reopen and re-import plans, and
+check byte limits. These prove local process-crash behavior, not power-loss
+durability or live provider recovery.
 
 ## Scope and invariants
 

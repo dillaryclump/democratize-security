@@ -1,5 +1,25 @@
 # Current status and next handoff
 
+## Offline plan ledger (2026-10-15, issue #27)
+
+Branch `milestone/offline-plan-ledger` is stacked on persistence design PR #26.
+New `store.PlanStore` atomically persists the entire offline plan, each scheduled
+trial and immutable import events. It validates reopens/snapshots, refuses a
+second controller, preserves events on re-import, rejects unknown store schemas,
+and never enables execution. See PERSISTENCE.md for the API and limits.
+
+This implements only slice 1a, not general transitions, budgets, evidence storage
+or external recovery. Next: review the proposed contract and this offline API,
+then implement versioned attempt transitions together with atomic reservations;
+keep expected-revision tests and all crash windows in the acceptance matrix.
+No M2 owner acceptance or M3 completion is claimed.
+
+Local validation: 21 ledger tests passed, including actual subprocess death
+before/after commit and separate-process lock contention. Full locked suite:
+219 passed, 43 skipped for optional dependencies or unavailable PostgreSQL/Docker
+configuration. Ruff lint/format, package build and diff checks passed. No new
+live infrastructure or physical power-loss evidence is claimed.
+
 ## Proposed persistence contract (2026-10-15, issue #21)
 
 Branch `design/persistence-recovery`, based on main `1124a0c`, adds the proposed
