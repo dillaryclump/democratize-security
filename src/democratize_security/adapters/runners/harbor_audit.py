@@ -152,6 +152,8 @@ def _summary(role: str, container: dict, trial_dir: Path, verifier_id: str | Non
         "memory_swap_bytes": host.get("MemorySwap"),
         "nano_cpus": host.get("NanoCpus"),
         "pids_limit": host.get("PidsLimit"),
+        "pid_mode": host.get("PidMode") or "",
+        "ipc_mode": host.get("IpcMode") or "",
         "mounts": sorted(mounts, key=lambda m: m["target"]),
     }
 
@@ -217,6 +219,16 @@ def audit(
         images = [agent["Image"], verifier["Image"], *(c["Image"] for c in apps())]
         if len(set(images)) != len(images):
             raise AssertionError("Agent, verifier and app containers share an image")
+        # Candidate code may share only the network namespace: a shared PID or
+        # IPC namespace would expose the verifier's processes and its nonce.
+        for container in apps():
+            host = container["HostConfig"]
+            if (
+                host.get("PidMode") not in {"", "private"}
+                or host.get("IpcMode") not in {"", "private", "shareable", "none"}
+                or host.get("UTSMode") not in {"", None}
+            ):
+                raise AssertionError("app shares a namespace beyond the verifier's network")
 
     def ordering():
         agent, verifier = main(agent_project), main(verifier_project)
@@ -356,6 +368,13 @@ def audit(
                 not re.fullmatch(r"\d+:\d+", user) or int(user.split(":")[0]) == host_uid
             ):
                 raise AssertionError(f"{role} needs an explicit uid:gid other than the host's")
+            # Same-uid processes can signal each other and read /proc entries.
+            if role == "app":
+                verifier_user = main(verifier_project)["Config"].get("User") or ""
+                if not re.fullmatch(r"\d+:\d+", verifier_user) or int(
+                    verifier_user.split(":")[0]
+                ) == int(user.split(":")[0]):
+                    raise AssertionError("app needs a numeric uid other than the verifier's")
             if (
                 "ALL" not in (host.get("CapDrop") or [])
                 or not set(host.get("CapAdd") or []) <= ROLE_CAPS[role]

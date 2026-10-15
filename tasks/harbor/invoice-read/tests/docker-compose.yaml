@@ -5,7 +5,9 @@
 services:
   main:
     network_mode: "none"
-    user: "postgres"
+    # The image's postgres user, numeric so the audit can prove the app's
+    # uid differs.
+    user: "999:999"
     # Reap the daemonized postmaster's children; Harbor's PID 1 is `sleep infinity`.
     init: true
     read_only: true

@@ -52,14 +52,14 @@ Acceptance requires all of:
 
 | Check | Requirement |
 | --- | --- |
-| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus, in the verifier project only, at most one `app`; agent, verifier and app images all differ; every started trial container was inspected |
+| `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus, in the verifier project only, at most one `app`; agent, verifier and app images all differ; the app shares no PID, IPC or UTS namespace; every started trial container was inspected |
 | `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts |
 | `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
 | `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write, and its only tmpfs is a `noexec` `/tmp`; no other named volume anywhere |
 | `declared_limits` | Memory and CPU equal `task.toml`; v3: the app's equal its compose declaration (missing declaration is incomplete) |
 | `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace); v3: the app joins only the verifier main's namespace (`container:<main id>`), so it has loopback only |
 | `no_observed_egress` | Positive control observed; no trial connection reached the host |
-| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app none; the last `no-new-privileges` option is true; the agent and app have explicit `uid:gid` users different from the controller's; task.toml sets no exec user |
+| `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app none; the last `no-new-privileges` option is true; the agent and app have explicit `uid:gid` users different from the controller's, and the app's uid differs from the verifier's, which must then be numeric; task.toml sets no exec user |
 | `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem, for main containers and the app |
 | `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration, the app's included |
 

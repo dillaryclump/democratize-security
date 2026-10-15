@@ -377,6 +377,8 @@ def observed_app(observed):
     verifier_project = compose_project(f"{TRIAL}__verifier__trial")
     volume = f"{verifier_project}_candidate"
     verifier = containers["verifier"]
+    # The application tasks run the verifier as the image's numeric postgres uid.
+    verifier["Config"]["User"] = "999:999"
     verifier["Config"]["Volumes"].pop("/candidate")
     verifier["Mounts"] = [m for m in verifier["Mounts"] if m["Destination"] != "/candidate"]
     verifier["Mounts"].append(candidate_mount(volume, writable=True))
@@ -408,6 +410,7 @@ def test_app_container_shape_passes(observed_app, tmp_path):
     assert record["outcome"] == "pass", record
     app = next(c for c in record["containers"] if c["role"] == "app")
     assert app["network"] == "verifier_main_namespace"
+    assert (app["pid_mode"], app["ipc_mode"]) == ("", "private")
     volume = compose_project(f"{TRIAL}__verifier__trial") + "_candidate"
     assert app["mounts"] == [
         {
@@ -434,6 +437,11 @@ def test_app_container_shape_passes(observed_app, tmp_path):
         ("other_tmpfs", "mount_scope"),
         ("verifier_without_candidate", "mount_scope"),
         ("verifier_read_only_candidate", "mount_scope"),
+        ("pid_shared", "separate_environments"),
+        ("ipc_shared", "separate_environments"),
+        ("uts_host", "separate_environments"),
+        ("verifier_uid", "least_privilege"),
+        ("named_verifier_user", "least_privilege"),
         ("root", "least_privilege"),
         ("named_user", "least_privilege"),
         ("host_uid", "least_privilege"),
@@ -485,6 +493,17 @@ def test_app_boundary_violation_fails(observed_app, mutation, check):
         containers["verifier"]["Mounts"].pop()
     elif mutation == "verifier_read_only_candidate":
         containers["verifier"]["Mounts"][-1]["RW"] = False
+    elif mutation == "pid_shared":
+        # A shared PID namespace would expose run.py's environment and nonce.
+        host["PidMode"] = "container:verifier"
+    elif mutation == "ipc_shared":
+        host["IpcMode"] = "container:verifier"
+    elif mutation == "uts_host":
+        host["UTSMode"] = "host"
+    elif mutation == "verifier_uid":
+        app["Config"]["User"] = "999:20001"
+    elif mutation == "named_verifier_user":
+        containers["verifier"]["Config"]["User"] = "postgres"
     elif mutation == "root":
         app["Config"]["User"] = "0:0"
     elif mutation == "named_user":

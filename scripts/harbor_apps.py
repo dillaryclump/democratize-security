@@ -152,7 +152,7 @@ def run_task(name, trials):
         )
         write_record(output / f"manifest-{control}.json", manifest)
         result = trial(control, replay, "nop", f"replay-{control}", expected_bundle=bundle)
-        record = record_replay(bundle, manifest, result)
+        record = record_replay(bundle, manifest, result, kind="sealed_app_replay")
         write_record(output / f"evidence-{control}.json", record)
         replays.append(record)
     return {"task": name, "controls": results, "replays": replays}

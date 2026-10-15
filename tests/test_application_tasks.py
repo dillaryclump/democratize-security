@@ -161,8 +161,11 @@ def test_app_service_is_hardened_and_confined():
     assert "\n      - candidate:/candidate:ro\n" in app
     assert "\n    tmpfs:\n      - /tmp:rw,noexec,nosuid,size=16m\n" in app
     assert "cap_add" not in app and "environment" not in app
+    # Only the network namespace is shared with the verifier.
+    assert not re.search(r"^\s+(pid|ipc|uts|userns_mode|privileged|devices):", app, re.M)
     main = compose[compose.index("\n  main:\n") : compose.index("\n  app:\n")]
     assert '\n    network_mode: "none"\n' in main
+    assert '\n    user: "999:999"\n' in main
     assert "\n      - candidate:/candidate\n" in main
 
 

@@ -111,13 +111,15 @@ def prepare_replay(
     }
 
 
-def record_replay(bundle: dict, manifest: dict, replay_result: dict) -> dict:
+def record_replay(
+    bundle: dict, manifest: dict, replay_result: dict, *, kind: str = "sealed_policy_replay"
+) -> dict:
     """Bind accepted replay evidence to the pre-existing bundle and verifier source."""
     validate(bundle)
     expected = bundle["artifact_sha256"]
     if manifest["artifact_sha256"] != expected or replay_result["artifact_sha256"] != expected:
         raise ValueError("Replay artifact does not match the sealed input")
-    result = {**replay_result, "replay_manifest": manifest, "kind": "sealed_policy_replay"}
+    result = {**replay_result, "replay_manifest": manifest, "kind": kind}
     return bind_evidence(bundle, manifest["verifier_sha256"], result)
 
 

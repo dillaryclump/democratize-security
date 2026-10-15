@@ -12,7 +12,8 @@ workloads are involved or authorized.
 
 Each task starts from the reference invoice API (FastAPI, PostgreSQL row-level
 security, fixed public bearer identities) with one endpoint removed. The agent
-edits `/candidate/app.py`; Harbor collects exactly that file.
+edits `/candidate/app.py`; Harbor collects that path (see Limits for what its
+collection does not check).
 
 | Task | Missing endpoint | Reviewed unsafe control |
 | --- | --- | --- |
@@ -61,8 +62,9 @@ The separate verifier has two services, built from `tests/`:
   no verifier code. It runs as `20001:20001` with no capabilities, 256 MiB
   without swap, one CPU, 64 PIDs and a read-only root. A 16 MiB `noexec` `/tmp`
   tmpfs matches the agent's. It joins `main`'s network namespace, which has
-  only loopback. Its sole mount is the project-scoped `candidate` volume,
-  read-only.
+  only loopback, and shares no other namespace. Its sole mount is the
+  project-scoped `candidate` volume, read-only. `main` runs as the image's
+  `postgres` user by number (`999:999`), so the audit can prove the uids differ.
 
 One verification:
 
@@ -83,8 +85,8 @@ One verification:
 5. `run.py` waits up to 60 seconds for `/health`, runs `verify()` (byte-identical
    to `verification/reference.py`) and writes evidence and `reward.txt`.
 
-Candidate code therefore never shares a process, filesystem or PID namespace
-with the verifier. It cannot reach Harbor's log mounts, the nonce, the verifier
+Candidate code therefore never shares a process, filesystem, uid or PID or IPC
+namespace with the verifier; audit v3 checks each of these on every trial. It cannot reach Harbor's log mounts, the nonce, the verifier
 sources or the superuser socket. Its only network peer is the database, as the
 restricted role. The agent container is stopped before any of this starts.
 
@@ -154,9 +156,11 @@ Then copy both files to the other tasks and to each `environment/`.
 
 ## Observed results
 
-Local, Docker 29.8.2 on cgroup v1 as root, all three tasks. Images were built
-with an uncommitted patch that lets pip trust this sandbox's TLS-intercepting
-proxy; nothing else differed from the committed files.
+Local, at `720fb80`: Docker 29.8.2 on cgroup v1 as root, all three tasks. Images
+were built with an uncommitted patch that lets pip trust this sandbox's
+TLS-intercepting proxy; nothing else differed from that commit's files. Later
+commits (launcher registration, the app's `/tmp`, namespace and uid rules) are
+covered by the CI runs below and by later local runs where STATUS.md says so.
 
 | | read | search | export |
 | --- | --- | --- | --- |
@@ -171,7 +175,12 @@ storage unbounded for agent, verifier and app. The app was observed in the
 verifier's namespace, with only the read-only candidate volume. The positive
 control reached the host listener and no trial connection did.
 
-CI evidence is pending; record the run here once it is green.
+CI, GitHub runner (uid 1001, cgroup v2), committed files unchanged; every job
+green, including one `harbor-apps` job per task (5 trials and 5 v3 audits each):
+
+- [run 38673823006](https://github.com/dillaryclump/democratize-security/actions/runs/38673823006) at `720fb80`;
+- [run 38674490600](https://github.com/dillaryclump/democratize-security/actions/runs/38674490600) at `5d9246c` (launcher registration);
+- [run 38674863679](https://github.com/dillaryclump/democratize-security/actions/runs/38674863679) at `8a244ad` (app `/tmp`).
 
 ## Limits
 
@@ -186,5 +195,19 @@ CI evidence is pending; record the run here once it is green.
 - Debian's `python3` and PostgreSQL packages remain mutable; audits record built
   image IDs.
 - Storage stays bounded only by the host for volumes and writable layers.
+- Harbor 0.24.0 moves the artifact through the host before `run.py` sees it,
+  and checks nothing on the way. A symlink at `/candidate/app.py` is resolved
+  on the host at upload, so a host directory it names is copied into the
+  verifier volume. Nothing bounds the size, so a sparse file can fill the host
+  disk. `run.py`'s checks (regular file, no symlink, 65536 bytes) are therefore
+  a second line, not the extraction boundary that ARCHITECTURE.md step 5
+  requires. The same holds for the policy task. Close this, for example with a
+  trusted collector that runs after the agent stops, before any untrusted
+  agent runs.
+- Harbor also uploads the agent-written `/logs/artifacts` directory. An agent
+  can leave files there that a non-root controller (CI's uid 1001) cannot read,
+  which turns the trial into a verifier-setup exception instead of a bound zero.
+  Host acceptance rejects any exception. Scoring must count a post-agent
+  verifier exception as a failure, never exclude or retry it.
 - One daemon per run, containers sharing the host kernel. Model-generated
   candidates need a dedicated worker host and an approved budget.

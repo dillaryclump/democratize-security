@@ -169,7 +169,7 @@ runs oracle, nop and a reviewed unsafe control per task, replays the sealed
 oracle and unsafe artifacts, and audits every trial. Audit policy v3 admits and
 constrains the app container. See APPLICATION_TASKS.md.
 
-Local evidence (Docker 29.8.2, cgroup v1, root host):
+Local evidence at `720fb80` (Docker 29.8.2, cgroup v1, root host):
 - Full suite with PostgreSQL 16 and the Docker worker tests: 235 passed, no
   skips. Ruff passes.
 - `harbor_apps.py` for all three tasks: 15 trials, every outcome exactly as
@@ -186,6 +186,33 @@ Local evidence (Docker 29.8.2, cgroup v1, root host):
   TLS-intercepting proxy. Committed Dockerfiles are unchanged; CI builds them
   as committed.
 
-Live CI for this change is pending. No model calls, spending or hostile-candidate
-execution are authorized. Next: owner review of the M2 evidence, then a dedicated
-worker host and approved budget before any agent runs.
+CI on the GitHub runner (uid 1001, cgroup v2) passed every job, including one
+`harbor-apps` job per task: [run 38673823006](https://github.com/dillaryclump/democratize-security/actions/runs/38673823006)
+at `720fb80`, [38674490600](https://github.com/dillaryclump/democratize-security/actions/runs/38674490600)
+at `5d9246c` and [38674863679](https://github.com/dillaryclump/democratize-security/actions/runs/38674863679)
+at `8a244ad`.
+
+Review fixes after the first evidence:
+- Copilot found that the launcher ran the candidate unregistered in
+  `sys.modules`, so a correct app using postponed annotations crashed. Fixed,
+  with a regression test.
+- An adversarial review found:
+  - the app had no writable `/tmp`, unlike the agent;
+  - audit v3 did not reject PID or IPC namespace sharing with the verifier, or
+    a shared uid;
+  - application replays were labelled `sealed_policy_replay`;
+  - the evidence text was not pinned to revisions.
+
+  All are fixed. The verifier now runs as numeric `999:999`. A local
+  `invoice-read` run with these fixes passed 5/5 trials with exact outcomes
+  and 5/5 audits: app uid 20001, private PID and IPC namespaces.
+- The review also confirmed a pre-existing gap: Harbor moves the artifact
+  through the host unchecked, so a symlink is resolved there and nothing bounds
+  the size. This holds for both task families and is recorded as a limit in
+  APPLICATION_TASKS.md; ARCHITECTURE.md step 5 is not yet met.
+
+No model calls, spending or hostile-candidate execution are authorized. Next:
+- a trusted artifact collector that stops the worker, rejects links and special
+  files and bounds size before Harbor's transfer (ARCHITECTURE.md step 5);
+- owner review of the M2 evidence;
+- a dedicated worker host and an approved budget before any agent runs.
