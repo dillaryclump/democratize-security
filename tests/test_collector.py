@@ -27,7 +27,9 @@ def test_every_task_uses_the_same_reviewed_collector():
         config = tomllib.loads((environment.parent / "task.toml").read_text())
         # Harbor transfers only the collector's checked copy, never the agent's path.
         assert config["artifacts"] == [
-            {"source": f"/candidate/{name}", "destination": name, "service": "collector"}
+            # Replaces Harbor's implicit upload of the agent-written bind mount.
+            {"source": "/logs/artifacts", "destination": "agent-artifacts", "exclude": ["*"]},
+            {"source": f"/candidate/{name}", "destination": name, "service": "collector"},
         ]
         assert config["verifier"]["collect"] == [
             {

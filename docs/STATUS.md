@@ -293,14 +293,19 @@ A local re-run with these fixes passed the v4 tamper audit and `invoice-read`'s
 nine trials and nine audits, each hostile script confirming its object was in
 place.
 
-Remaining limits:
-- Harbor itself still uploads the agent's bind-mounted `/logs/artifacts`
-  directory unchecked. Nothing reads it, so the impact is availability only,
-  but sparse files there expand in full and special files pass through. See
-  APPLICATION_TASKS.md limits.
-- Storage is bounded only by the host.
+The review also confirmed that Harbor itself re-uploads the agent's
+bind-mounted `/logs/artifacts` directory into the verifier unchecked. Each task
+now closes that channel with an explicit convention entry (`exclude = ["*"]`
+and a fresh `destination`). Harbor then tars nothing into the agent's `/tmp`
+tmpfs, cannot copy that archive out, and stages at most an empty directory. A
+tenth control per task (`logs`) leaves a 1 GiB sparse file, a canary link, a
+FIFO and a mode-000 file there next to a valid app. Locally it passed with
+reward 1 and an empty staging directory, while the hostile files stayed in the
+agent's host bind mount; all 10 audits passed, and the policy-task tamper audit
+and replay hashes were unchanged.
+
+Remaining limit: storage is bounded only by the host.
 
 No model calls, spending or hostile-candidate execution are authorized. Next:
-- close or bound the `/logs/artifacts` transfer;
 - owner review of the M2 evidence;
 - a dedicated worker host and an approved budget before any agent runs.

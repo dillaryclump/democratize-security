@@ -34,7 +34,7 @@ uv sync --locked --group harbor
 uv run --locked --group harbor python scripts/harbor_apps.py invoice-read
 ```
 
-Pass one or more task names (default: all three). Per task, nine finite trials
+Pass one or more task names (default: all three). Per task, ten finite trials
 with no retries, each bounded to 600 seconds. Existing
 `.research/harbor-apps/<task>` outputs cause refusal. Use a disposable Linux
 Docker host: the run briefly listens on a random host TCP port. CI job
@@ -142,7 +142,10 @@ directory (absent from the container), a 1 GiB sparse file or a FIFO must each
 end in a clean reward 0 with no collected `app.py`, a `failed` collector entry
 in Harbor's manifest, nonce-bound `invalid_submission` evidence and the canary's
 random secret in no trial output. A valid reference app saved as `0600` must
-pass every check. All nine trials per task are audited.
+pass every check, and so must a valid app whose `solve.sh` also leaves a 1 GiB
+sparse file, a link to the canary, a FIFO and a mode-000 file in
+`/logs/artifacts`; nothing from there may be staged for the verifier. All ten
+trials per task are audited.
 
 ## Consistency rules
 
@@ -235,18 +238,16 @@ evidence of record for the final rules.
   the collector's checked copy, and `run.py`'s own checks are a second line.
   The collector depends on Harbor stopping the agent's container before
   sidecar collection; audit v4 verifies that from Docker events.
-- Harbor also uploads the agent-written `/logs/artifacts` directory (a host
-  bind mount, outside the collector's reach) into the verifier, unchecked and
-  before the verifier timeout starts. Nothing there is ever read, so the
-  impact is availability only, but:
-  - a sparse file there is expanded in full into the verifier's Docker volume,
-    and Harbor's fallback buffers the whole archive in memory;
-  - symlinks and FIFOs arrive in the verifier as-is (links are not followed);
-  - files a non-root controller (CI's uid 1001) cannot read turn the trial into
-    a verifier-setup exception instead of a bound zero.
-
-  Host acceptance rejects any exception, and scoring must count a post-agent
-  verifier exception as a failure, never exclude or retry it. Close or bound
-  this transfer before untrusted agents run.
+- Harbor would also re-upload the agent-written `/logs/artifacts` bind mount
+  into the verifier unchecked (sparse files expanded, special files passed
+  through, unreadable files turning into a setup exception). Each task
+  therefore declares that convention entry explicitly with `exclude = ["*"]`
+  and a fresh `destination`: Harbor tars nothing into the agent's `/tmp`
+  tmpfs, cannot copy that archive out, and stages at most an empty directory.
+  The `logs` control proves this per task. The agent's files stay in the host
+  bind mount, so host storage remains the host's limit.
+- Any other post-agent verifier exception (Harbor or infrastructure) is still
+  possible; host acceptance rejects it, and scoring must count it as a
+  failure, never exclude or retry it.
 - One daemon per run, containers sharing the host kernel. Model-generated
   candidates need a dedicated worker host and an approved budget.

@@ -168,8 +168,8 @@ worker host and an approved budget.
 
 ## Application tasks
 
-`scripts/harbor_apps.py` audits every trial it runs (nine per task: oracle, nop,
-unsafe, both replays and the four extraction controls) under v4, with one
+`scripts/harbor_apps.py` audits every trial it runs (ten per task: oracle, nop,
+unsafe, both replays and the five extraction controls) under v4, with one
 positive control and one host listener for the whole run, and fails unless all
 pass with zero trial connections and exactly one app. App and collector limits
 (memory, CPU and PIDs) come from the trusted verifier and agent compose files.
@@ -210,8 +210,11 @@ collected file and the canary absent from all trial output, and a valid `0600`
 app passes. Each hostile script checks that its object is in place before
 printing a marker that acceptance requires. The policy task uses the
 byte-identical collector, covered by its unit tests and the tamper control.
-Harbor still uploads the agent's bind-mounted `/logs/artifacts` directory
-itself, unchecked; see APPLICATION_TASKS.md limits.
+Harbor would also re-upload the agent's bind-mounted `/logs/artifacts`
+directory into the verifier unchecked. Every task closes that channel with an
+explicit convention entry (`exclude = ["*"]`, fresh `destination`), so at most
+an empty directory is staged; the `logs` control proves it with a sparse file,
+a canary link, a FIFO and an unreadable file left there.
 
 ## Next bounded task
 

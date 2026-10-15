@@ -1,5 +1,11 @@
 schema_version = "1.4"
-artifacts = [{ source = "/candidate/app.py", destination = "app.py", service = "collector" }]
+# Harbor otherwise re-uploads the agent-written /logs/artifacts bind mount into
+# the verifier unchecked; this explicit entry excludes everything and lands in a
+# fresh host directory, so the verifier receives at most an empty directory.
+artifacts = [
+  { source = "/logs/artifacts", destination = "agent-artifacts", exclude = ["*"] },
+  { source = "/candidate/app.py", destination = "app.py", service = "collector" },
+]
 
 [task]
 name = "democratize-security/invoice-export"

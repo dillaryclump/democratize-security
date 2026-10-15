@@ -101,7 +101,7 @@ def test_task_configuration_is_separate_and_isolated():
     for name in TASKS:
         config = tomllib.loads((task(name) / "task.toml").read_text())
         assert config["task"]["name"] == f"democratize-security/{name}"
-        assert config["artifacts"] == [
+        assert config["artifacts"][1:] == [
             {"source": "/candidate/app.py", "destination": "app.py", "service": "collector"}
         ]
         assert config["verifier"]["environment_mode"] == "separate"
@@ -514,3 +514,15 @@ def test_extraction_controls_are_reviewed_scripts(apps, tmp_path):
     assert "install -m 600 /solution/app.py /candidate/app.py" in solve.read_text()
     assert solve.read_text().rstrip().endswith(f"echo '{apps['MARKER']}'")
     assert (hostile / "solution/app.py").read_bytes() == REFERENCE.read_bytes()
+
+
+def test_logs_control_requires_nothing_staged(apps, tmp_path):
+    trial = tmp_path / "job" / "task-logs__x"
+    (trial / "artifacts/agent-artifacts").mkdir(parents=True)
+    (trial / "result.json").write_text("{}")
+    assert apps["accept_logs"](trial.parent) == "empty"
+    (trial / "artifacts/agent-artifacts/sparse").write_bytes(b"")
+    with pytest.raises(ValueError):
+        apps["accept_logs"](trial.parent)
+    for line in ("truncate -s 1G", "ln -s {canary}", "mkfifo", "install -m 000"):
+        assert line in apps["LOGS"]

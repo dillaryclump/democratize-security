@@ -10,10 +10,12 @@ For each requested task (default: all three), under trusted host observation:
 - hostile extraction controls leave a symlink to a host canary directory, a
   1 GiB sparse file or a FIFO at the artifact path. The trusted collector must
   reject each one, so nothing is collected and the verifier grades a bound zero.
-  A valid app saved as 0600 must still pass.
+  A valid app saved as 0600 must still pass, as must a valid app whose agent
+  also left a sparse file, a link to the canary, a FIFO and an unreadable file
+  in /logs/artifacts, none of which may be staged for the verifier.
 
 Every trial must also pass the host-observed boundary audit, with no host
-listener connection during the whole run. Nine finite trials per task, no retries.
+listener connection during the whole run. Ten finite trials per task, no retries.
 """
 
 import base64
@@ -75,6 +77,18 @@ EXTRACTION = {
 PRIVATE = (
     "rm -f /candidate/app.py\ninstall -m 600 /solution/app.py /candidate/app.py\n"
     'test "$(stat -c %a /candidate/app.py)" = 600'
+)
+# A valid app plus hostile files in the agent-written /logs/artifacts bind
+# mount, which Harbor would otherwise copy into the verifier unchecked.
+LOGS = (
+    "truncate -s 1G /logs/artifacts/sparse\n"
+    "ln -s {canary} /logs/artifacts/link\n"
+    "mkfifo /logs/artifacts/fifo\n"
+    "install -m 000 /dev/null /logs/artifacts/unreadable\n"
+    # Separate lines: under set -e a failure before && would not stop the script.
+    "test -p /logs/artifacts/fifo\n"
+    "test -L /logs/artifacts/link\n"
+    "cp /solution/app.py /candidate/app.py"
 )
 MARKER = "extraction control in place"
 
@@ -181,6 +195,18 @@ def accept_rejected(job, nonce, secret):
     return {"outcome": evidence["outcome"], "reward": 0, "collected": False}
 
 
+def accept_logs(job):
+    """Nothing the agent wrote to /logs/artifacts may be staged for the verifier."""
+    trials = [path.parent for path in job.glob("*/result.json")]
+    if len(trials) != 1:
+        raise ValueError("expected exactly one trial result")
+    staged = trials[0] / "artifacts/agent-artifacts"
+    entries = sorted(path.name for path in staged.iterdir()) if staged.is_dir() else []
+    if os.path.islink(staged) or entries:
+        raise ValueError("agent-written /logs/artifacts content was staged for the verifier")
+    return "empty"
+
+
 def run_task(name, trials):
     task = TASKS / name
     output = OUTPUT / name
@@ -235,6 +261,10 @@ def run_task(name, trials):
     private = output / "task-private"
     prepare_extraction(task, private, PRIVATE)
     extraction["private"] = trial("oracle", private, "oracle", "private")
+    logs = output / "task-logs"
+    prepare_extraction(task, logs, LOGS.format(canary=shlex.quote(str(canary.resolve()))))
+    extraction["logs"] = trial("oracle", logs, "oracle", "logs")
+    extraction["logs"]["verifier_logs_artifacts"] = accept_logs(output / "logs")
     return {"task": name, "controls": results, "replays": replays, "extraction": extraction}
 
 
