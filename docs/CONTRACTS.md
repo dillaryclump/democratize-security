@@ -23,7 +23,15 @@ Canonical JSON uses sorted keys, compact separators, finite values and SHA-256. 
 
 Validation does not verify a task hash against external files, model availability, caller authority, isolation, actual costs or security. Real execution must resolve those before dispatch. No `run`, `resume`, `report` or `confirm` command is exposed yet.
 
-## Future contracts, not implemented
+## Offline verifier evidence contract
+
+[EVIDENCE.md](EVIDENCE.md) specifies strict existing-v3 report validation and
+bounded canonical envelopes bound to an independently selected artifact binding
+and verification request ID. This is implemented as a standard-library contract,
+not result persistence, authenticated execution provenance or acceptance. Existing
+verifier/scoring behavior and campaign schema remain unchanged.
+
+## Future runtime contracts, not implemented
 
 See [PERSISTENCE.md](PERSISTENCE.md) for the proposed store schema, transition
 table, crash recovery, budget accounting and implementation acceptance tests.
