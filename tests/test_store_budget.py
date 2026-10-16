@@ -336,3 +336,63 @@ def test_projection_corruption_refuses_reopen(tmp_path, campaign):
         db.execute("UPDATE attempts SET state_json = '{}'")
     with pytest.raises(StoreError, match="projection"):
         PlanStore(tmp_path)
+
+
+def test_old_request_replay_cannot_restore_a_hold_after_settlement(tmp_path, campaign):
+    with PlanStore(tmp_path) as store:
+        store.import_campaign(campaign)
+        prepared = store.record_accounting("reserve", prepare(campaign))
+        interrupted = store.record_accounting("stop", interrupt())
+        settled = store.record_accounting("bill", settle())
+    with PlanStore(tmp_path) as store:
+        before = list(store._db.iterdump())
+        assert store.record_accounting("reserve", prepare(campaign)) == prepared
+        assert store.record_accounting("stop", interrupt()) == interrupted
+        assert store.attempts() == [settled]
+        assert list(store._db.iterdump()) == before
+        budget = store.budget_snapshot(plan(campaign)["campaign_id"])
+        assert budget["held_cents"] == 0
+        assert budget["settled_cents"] == 40
+        assert not budget["blocked"]
+
+
+def test_migration_sql_failure_rolls_back_schema_and_releases_lock(tmp_path, campaign, monkeypatch):
+    planned = create_v1(tmp_path, campaign)
+    before = old_records(tmp_path)
+    original_connect = sqlite3.connect
+
+    class FailingConnection(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.startswith("CREATE TABLE attempt_events"):
+                raise sqlite3.OperationalError("injected migration failure")
+            return super().execute(sql, *args)
+
+    def connect(*args, **kwargs):
+        return original_connect(*args, factory=FailingConnection, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", connect)
+        with pytest.raises(sqlite3.OperationalError, match="injected migration failure"):
+            PlanStore(tmp_path, migrate=True)
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'attempts'").fetchone()
+    assert old_records(tmp_path) == before
+    with PlanStore(tmp_path, migrate=True) as store:
+        assert store.snapshot(planned["campaign_id"]) == planned
+        assert store.attempts() == []
+
+
+def test_corrupt_legacy_plan_is_rejected_before_migration(tmp_path, campaign):
+    create_v1(tmp_path, campaign)
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as db:
+        db.execute("DROP TRIGGER events_no_delete")
+        db.execute("DELETE FROM events")
+        db.execute(V1_SCHEMA["events_no_delete"])
+    before = old_records(tmp_path)
+    with pytest.raises(StoreError, match="event coverage"):
+        PlanStore(tmp_path, migrate=True)
+    with sqlite3.connect(tmp_path / "ledger.sqlite3") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'attempts'").fetchone()
+    assert old_records(tmp_path) == before
