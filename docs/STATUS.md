@@ -1,6 +1,6 @@
 # Current status and next handoff
 
-Updated: 2026-10-15. Current work: M2 runner gate. The three application tasks run model-free under the hardened Harbor layout; see APPLICATION_TASKS.md and the latest evidence below. Owner acceptance of M2 is pending.
+Updated: 2026-10-16. Current work: M2 runner gate. The three application tasks run model-free under the hardened Harbor layout; see APPLICATION_TASKS.md and the latest evidence below. Owner acceptance of M2 is pending.
 
 ## Implemented
 
@@ -332,3 +332,89 @@ No model calls, spending or hostile-candidate execution are authorized. Next:
 - per-trial storage quotas on a dedicated worker host;
 - owner review of the M2 evidence;
 - an approved budget before any agent runs.
+
+## Bounded container storage (2026-10-16)
+
+Mapped every host-storage channel a trial's containers can write. Under v4 the
+agent could fill host disk through its `/candidate` volume and through its
+container log: it can write its init's stdout, and 3 MB written that way landed
+in the host's JSON log file in a local probe. The candidate app could do the
+same through its own stdout. Every Harbor task (policy and application) now
+bounds what its containers can write:
+
+- The agent's `/candidate` and `/solution` are 16 MiB tmpfs volumes and the
+  collector's output a 1 MiB one, all freed with the trial. Docker does not
+  copy image content into a tmpfs volume, so each agent image, and each
+  generated replay image, seeds its starter through a trusted entrypoint
+  (`environment/seed.sh`). A healthcheck makes Harbor's `up --wait` hold the
+  agent until the starter is in place, so task instructions and reviewed
+  outcomes are unchanged.
+- Every container keeps one 1 MiB `json-file` log.
+- Audit policy v5 adds the required check `bounded_container_storage`. Logs,
+  `/dev/shm`, tmpfs and root filesystems must be bounded for main containers,
+  the app and the collector. Every writable volume of the agent, app and
+  collector must be a tmpfs volume with a declared size, from volume
+  inspections the watcher captures while the volumes exist. The verifier's own
+  volumes are a reported gap.
+- A twelfth control per application task (`fill`) requests 128 MiB on each of
+  `/candidate`, `/tmp` and `/dev/shm` and writes 8 MiB to its init's stdout
+  before submitting the reference app.
+
+The trial directory is not bounded by this change. Harbor bind-mounts it into
+the containers and copies artifacts, including the forced fallback copy, into
+it. Bounding it per trial means mounting each job directory on its own
+filesystem, which needs host privilege. A draft that made the scripts do that
+with `sudo mount` was blocked by this session's permission policy, and the
+scripts deliberately mount nothing. The audit instead measures the trial
+filesystem and reports `trial_storage_unbounded` until a worker host provides
+one of at most 64 MiB per trial.
+
+Local evidence (Docker 29.8.2, cgroup v1, root host; images built with the
+uncommitted proxy-CA patch, as before):
+- Unit suite (no PostgreSQL or Docker): 340 passed and 1 skipped (the
+  mode-000 case cannot apply as root). Ruff passes.
+- `invoice-read`: all 12 trials exactly as reviewed and 12/12 v5 audits
+  (11 checks each) with zero egress. In the fill control each write stopped at
+  its bound: `/candidate` at 16,773,120 bytes (16 MiB less the seeded starter),
+  `/tmp` at 16 MiB and `/dev/shm` at 64 MiB. After 8 MiB written to its init's
+  stdout, the agent's container log held 393,216 bytes, and the app still
+  passed. The agent, app and collector showed no unbounded surface.
+  - Every audit reported the same three gaps:
+    `agent_can_write_verifier_log_directory`, `verifier_storage_unbounded`
+    (its candidate, `/logs/artifacts` and PostgreSQL data volumes) and
+    `trial_storage_unbounded` (the trial directory was on the 252 GiB root
+    filesystem).
+- Policy task under v5:
+  - oracle 1 / nop 0. The nop's artifact hash is unchanged, so the seeded
+    starter is byte-identical.
+  - Both replays, now seeded through the entrypoint, kept bundle hashes
+    `6fb653ff…` and `34da710d…`.
+  - The tamper audit passed 11/11 with the same three gaps. The forgery was
+    observed and discarded, the genuine reward was 0, and the probe reported
+    no default route.
+
+An adversarial review (three reviewers, each finding challenged by a skeptic)
+confirmed three defects, all fixed with tests that fail without the fix:
+- A tmpfs option string could declare `size=` and then lift it with
+  `nr_blocks=0`, which the kernel applies last and reads as unlimited. The
+  audit now refuses any `nr_blocks=`, for tmpfs mounts and tmpfs volumes.
+- A trial filesystem reporting zero capacity (ramfs, or tmpfs with `size=0`)
+  would have cleared `trial_storage_unbounded`; it now counts as unbounded.
+- A watcher comment misstated when Harbor removes the agent's container. Harbor
+  runs `compose down` right after collection, not at the end of the trial. The
+  log is still read in that window, and a lost race fails closed.
+
+The local runs above used the audit as it was before these fixes, which only
+tighten it; the shipped files set none of the refused options. CI on the final
+code is the evidence of record.
+
+A volume declared as tmpfs but mounted with a `bind` flag, or from a host
+device, now also fails. The skeptic judged this out of scope, since only a
+trusted task author sets volume options, but the check is two lines. Refuted:
+core dumps (on this host and CI they land in the container's own bounded
+filesystems), a looser log cap aliasing in the fill control (the required
+static check rejects any cap above 1 MiB), and two wording points.
+
+Next: a dedicated worker host that mounts each trial's job directory on its own
+bounded filesystem, owner review of the M2 evidence and the M0 contract
+defaults, and an approved finite model budget before any agent execution.

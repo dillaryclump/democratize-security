@@ -790,6 +790,10 @@ def test_collector_is_summarized(observed):
         ("agent", "candidate_uninspected"),
         ("agent", "candidate_too_large"),
         ("agent", "solution_plain_volume"),
+        ("agent", "tmpfs_nr_blocks"),
+        ("agent", "candidate_nr_blocks"),
+        ("agent", "candidate_bind_flag"),
+        ("agent", "candidate_host_device"),
         ("agent", "anonymous_volume"),
         ("collector", "collected_plain_volume"),
         ("collector", "log_unbounded"),
@@ -830,6 +834,18 @@ def test_unbounded_storage_fails(observed_app, role, mutation):
         volumes[f"{AGENT_PROJECT}_candidate"]["Options"]["o"] = "size=1g,uid=10001"
     elif mutation == "solution_plain_volume":
         volumes[f"{AGENT_PROJECT}_solution"]["Options"] = {}
+    elif mutation == "tmpfs_nr_blocks":
+        # The kernel applies size= and nr_blocks= in order; 0 means unlimited.
+        host["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,size=16m,nr_blocks=0"
+    elif mutation == "candidate_nr_blocks":
+        volumes[f"{AGENT_PROJECT}_candidate"]["Options"]["o"] = "size=16m,nr_blocks=0,uid=10001"
+    elif mutation == "candidate_bind_flag":
+        # MS_BIND ignores the filesystem type: this mounts a host directory.
+        volumes[f"{AGENT_PROJECT}_candidate"]["Options"].update(
+            device="/var/tmp/host", o="bind,size=16m"
+        )
+    elif mutation == "candidate_host_device":
+        volumes[f"{AGENT_PROJECT}_candidate"]["Options"]["device"] = "/dev/sdb1"
     elif mutation == "anonymous_volume":
         # Admitted by mount_scope as image-declared, but unbounded host storage.
         container["Config"]["Volumes"] = {"/cache": {}}
@@ -860,6 +876,8 @@ def test_app_task_shape_has_bounded_container_storage(observed_app):
         ((True, TRIAL_STORAGE_BYTES), False),
         ((True, 1024 * 1024), False),
         ((True, TRIAL_STORAGE_BYTES + 4096), True),
+        # ramfs and tmpfs with size=0 have no block limit and report 0.
+        ((True, 0), True),
         ((False, 1024 * 1024), True),
         (OSError(), True),
     ],

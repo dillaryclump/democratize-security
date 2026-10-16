@@ -153,7 +153,15 @@ def _bytes(value) -> int | None:
 
 
 def _tmpfs_size(options: str) -> int | None:
-    sizes = [o.split("=", 1)[1] for o in options.split(",") if o.startswith("size=")]
+    """The declared tmpfs size in bytes; None if unbounded or not a plain size.
+
+    The kernel applies `size=` and `nr_blocks=` in order, last wins, and treats
+    0 as unlimited, so any `nr_blocks=` is refused rather than modelled.
+    """
+    parts = options.split(",")
+    if any(o.startswith("nr_blocks=") for o in parts):
+        return None
+    sizes = [o.split("=", 1)[1] for o in parts if o.startswith("size=")]
     return _bytes(sizes[-1]) if sizes else None
 
 
@@ -200,7 +208,14 @@ def _unbounded(container: dict, volumes: dict, trial_dir: Path) -> list[tuple[st
             continue
         volume = volumes.get(mount.get("Name") or "") if mount["Type"] == "volume" else None
         options = (volume or {}).get("Options") or {}
-        size = _tmpfs_size(options.get("o", "")) if options.get("type") == "tmpfs" else None
+        flags = set(options.get("o", "").split(","))
+        # A `bind` flag would mount a host directory whatever the type says.
+        tmpfs_volume = (
+            options.get("type") == "tmpfs"
+            and options.get("device") == "tmpfs"
+            and not flags & {"bind", "rbind"}
+        )
+        size = _tmpfs_size(options.get("o", "")) if tmpfs_volume else None
         if (volume or {}).get("Driver") == "local" and size is not None and size <= TMPFS_BYTES:
             continue
         found.append((mount["Type"], mount["Destination"]))
@@ -663,7 +678,8 @@ def audit(
         trial_storage = {"own_filesystem": own, "capacity_bytes": capacity}
     except OSError:
         own, trial_storage = False, None
-    if not own or trial_storage["capacity_bytes"] > TRIAL_STORAGE_BYTES:
+    # Filesystems without a block limit (ramfs, tmpfs with size=0) report 0.
+    if not own or not 0 < trial_storage["capacity_bytes"] <= TRIAL_STORAGE_BYTES:
         gaps.add("trial_storage_unbounded")
     complete = all(c["outcome"] in {"pass", "fail"} for c in checks)
     return {

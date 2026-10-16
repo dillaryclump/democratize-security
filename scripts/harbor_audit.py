@@ -235,9 +235,13 @@ class Watcher:
                     self.volumes[name] = json.loads(result.stdout)[0]
 
     def _measure_log(self, identity, project):
-        # Harbor stops the agent before verification and removes it only at
-        # the end of the trial, so the log is still there. Reading stops just
-        # past the bound, so an unbounded log cannot exhaust this process.
+        # In separate mode Harbor stops main (this `die`) before sidecar
+        # collection and removes it with `compose down` right after that
+        # collection, before verification. This thread is idle then, so the
+        # read normally wins that window of seconds; if the container is
+        # already gone, `docker logs` fails, nothing is recorded and
+        # accept_fill fails closed. Reading stops just past the bound, so an
+        # unbounded log cannot exhaust this process.
         limit = 4 * LOG_BYTES
         process = subprocess.Popen(
             ["docker", "logs", identity], stdout=subprocess.PIPE, stderr=subprocess.STDOUT

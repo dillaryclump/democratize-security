@@ -73,7 +73,7 @@ Acceptance requires all of:
 | `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app and collector none; the last `no-new-privileges` option is true; the agent, app and collector have explicit `uid:gid` users different from the controller's, and the app's uid differs from the verifier's, which must then be numeric; task.toml sets no exec user |
 | `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem, for main containers, the app and the collector |
 | `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration, the app's and collector's included |
-| `bounded_container_storage` | v5: for main containers, the app and the collector, every container log is one `json-file` of at most 1 MiB (or none), `/dev/shm` is at most 64 MiB, every tmpfs declares a size of at most 256 MiB, and the root filesystem is read-only. Besides binds inside the trial directory, every writable volume of the agent, app and collector is a local tmpfs volume declaring a size of at most 256 MiB, with its inspection observed; the verifier's own volumes are reported, not required |
+| `bounded_container_storage` | v5: for main containers, the app and the collector, every container log is one `json-file` of at most 1 MiB (or none), `/dev/shm` is at most 64 MiB, every tmpfs declares a size of at most 256 MiB and no `nr_blocks=` (which the kernel applies in order and reads 0 as unlimited), and the root filesystem is read-only. Besides binds inside the trial directory, every writable volume of the agent, app and collector is a local volume whose type and device are `tmpfs`, with no `bind` flag and the same size rule, and its inspection observed; the verifier's own volumes are reported, not required |
 
 Missing containers, events, the positive control or the nonce yield
 `incomplete`, never pass. Evidence stores trial-relative mount sources, not host
@@ -272,7 +272,8 @@ Two surfaces remain bounded only by the host:
   agent's `/logs/artifacts`. Bounding it per trial needs host privilege:
   mounting each job directory on its own filesystem of at most 64 MiB before
   Harbor runs. The audit measures this and reports `trial_storage_unbounded`
-  until a worker host does it. The scripts in this repository do not mount
+  until a worker host does it. A filesystem reporting no capacity (ramfs, or
+  tmpfs with `size=0`) has no block limit and counts as unbounded. The scripts in this repository do not mount
   anything.
 - The verifier's own volumes (`verifier_storage_unbounded`). Only Harbor,
   copying from the trial directory, and the trusted verifier write them.
