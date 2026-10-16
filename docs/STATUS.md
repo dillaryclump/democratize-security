@@ -2,10 +2,13 @@
 
 Snapshot: 2026-10-16 UTC. Integration #33 is merged on main at `d6c2657`,
 including collector #17, container-storage #31 and the offline persistence stack.
-Artifact object publication #35 is merged at `dd7fe70`. Branch
+Artifact object publication #35 is merged at `dd7fe70`.
 Immutable artifact references #37 are merged at `0791d47`.
 Branch `milestone/verifier-evidence-contract` adds report validation and canonical
-evidence envelopes (#38); this new contract is not yet merged.
+evidence envelopes (#38, PR #39); this new contract is not yet merged.
+Stacked branch `milestone/evidence-objects` adds durable offline evidence object
+publication/read/reconciliation (#40), also not yet merged. No ledger linkage or
+trusted runtime provenance is added.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before editing.
 See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
@@ -106,3 +109,26 @@ setup remain owner decisions.
 Keep this file a current summary. Preserve superseded evidence in the history
 file, with its revision. Use [HANDOFF_TEMPLATE.md](HANDOFF_TEMPLATE.md), record
 claims in issues and verify current main before each new implementation slice.
+
+## Evidence object handoff (#40)
+
+`evidence_objects.publish_evidence` durably publishes canonical bounded envelopes
+without replacement; `read_evidence` revalidates raw and envelope identities plus
+independently supplied binding/request context. Existing exact objects require
+file and directory sync reconciliation. Missing, corrupt, noncanonical, symlink,
+hardlink and special-file objects fail closed. This is offline storage, not
+authenticated verifier execution, accepted results or promotion.
+
+Tests include process death after file sync, link and before/after directory
+sync. Death after linking but before removing the temporary name leaves a
+multiply-linked orphan which deliberately blocks reuse pending explicit operator
+reconciliation. No automatic cleanup, ledger migration or runner changes.
+
+Local validation: 30 focused tests passed; full suite 482 passed and 54 skipped
+(optional dependencies, PostgreSQL and Docker prerequisites unavailable). Locked
+sync, Ruff check/format, package build and diff whitespace checks passed. Skips
+are not integration evidence; CI must validate the published revision.
+
+Next: review #39 then this stacked slice; implement immutable evidence ledger
+linkage with crash tests and an explicit trusted runtime provenance boundary,
+then recovery/controller fencing. Owner acceptance remains separate in #19.

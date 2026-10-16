@@ -415,3 +415,33 @@ objects, sync the snapshot/manifest and verify a restore in a new directory.
 Never copy a live SQLite file alone. A restored store must reconcile external
 requests before dispatch because external work may postdate the backup. Files
 under ignored `.research/` are not durable backups by themselves.
+
+## Offline evidence objects (issue #40, stacked on #39)
+
+`evidence_objects.publish_evidence(directory, record, binding, request_id)`
+returns a version-1 reference with kind `offline_verifier_evidence`, schema
+version, raw object SHA-256, encoded byte length and envelope SHA-256. The raw
+file and envelope hashes are different identities. Names are digest-derived;
+callers cannot select arbitrary file paths.
+
+`read_evidence(directory, reference, binding, request_id)` revalidates bounded
+bytes, canonical envelope, hashes and expected context on every read. Supply
+the binding from independently revalidated controller state and the expected
+request identity, never from the file being checked. A valid envelope does not
+prove a verifier ran. These APIs neither check the artifact file themselves nor
+update PlanStore, attempt phase, acceptance or budget.
+
+Use an existing durable controller-owned local directory with stable ancestors,
+no candidate access and filesystem support for file/directory fsync and hardlinks.
+Publication uses a private temporary file, file fsync, atomic no-replace link,
+temporary unlink, directory fsync and readback validation. Exact-existing retry
+revalidates then syncs both file and directory; corrupt destinations are never
+replaced. No reference is returned after a failed barrier.
+
+Process death before linking can leave a temporary orphan; death between linking
+and temporary unlink leaves two names for the same inode. The latter is rejected
+as multiply linked, including on retry, until explicit operator reconciliation.
+Nothing automatically deletes orphan files. Death after unlink can leave a
+singly-linked object that exact-byte retry can reconcile. Tests prove these
+process-interruption behaviors, not power-loss durability. Errors may leave
+objects behind; an object alone is never a committed or accepted result.
