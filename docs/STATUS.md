@@ -2,7 +2,9 @@
 
 Snapshot: 2026-10-16 UTC. Integration #33 is merged on main at `d6c2657`,
 including collector #17, container-storage #31 and the offline persistence stack.
-Branch `milestone/artifact-objects` adds the object-publication prerequisite (#34).
+Artifact object publication #35 is merged at `dd7fe70`. Branch
+`milestone/artifact-bindings` adds immutable artifact references (#36), not yet
+merged into main.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before editing.
 See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
@@ -59,15 +61,22 @@ failures, fixes and source-branch handoffs remain in
 
 Artifact-object slice #34 local validation: 25 focused tests passed; complete
 suite 416 passed, 32 infrastructure skips. Ruff check/format and package build
-passed. Its separate PR records CI for that new revision.
+passed. All eight jobs passed in [CI 38913561509](https://github.com/dillaryclump/democratize-security/actions/runs/38913561509)
+at #35 head `3bbfb82`; #35 is merged.
+
+Artifact-binding slice #36 local validation: 25 new focused tests passed,
+including binding/migration process crashes and SQL/sync failures. Full suite:
+441 passed, 32 infrastructure skips; Ruff check/format and package build passed.
+Its separate PR records CI for this new revision.
 
 ## Next bounded work and gates
 
-1. Review artifact object publication (#34): bounded validated reads, raw/payload
-   identities, exact retry with sync reconciliation. This adds no ledger references
-   or accepted results. Keep M2 owner acceptance in #19 separate.
-2. Implement durable evidence references with exact artifact/verifier/attempt
-   identity checks and missing/tampered-object rejection. Then implement the
+1. Review immutable artifact binding (#36): explicit store v3 migration, exact
+   attempt/task identity, pinned synthetic verifier intent and object revalidation
+   at reopen/read/new preparation. This adds no accepted result or execution.
+   Keep M2 owner acceptance in #19 separate.
+2. Implement verifier-result evidence with complete check accounting and trusted
+   runtime provenance. Then implement the
    recovery reducer and controller-generation fencing using synthetic observations.
 3. Before runner integration, review the persistence contract and prove the above
    crash windows. Before model execution, obtain M0/M2 owner acceptance, a
@@ -79,7 +88,8 @@ not bound the host job directory; a dedicated host must provide a separate bound
 filesystem per trial. No privileged mounting is performed by repository scripts.
 The public fixtures are not a protected holdout; all containers share a host kernel.
 
-M3 is partial: only offline plans and synthetic accounting persist. No durable
+M3 is partial: offline plans, synthetic accounting and artifact bindings persist
+on this branch. No durable
 accepted-result/evidence registry, full recovery engine, production dispatcher,
 protected final evaluator, paid pilot, demonstrated benchmark gain or GEPA search
 exists. Production identity, license, branch protection and vulnerability-reporting

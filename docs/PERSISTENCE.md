@@ -39,12 +39,13 @@ open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
 refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
-version 2; no other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
+version 3; version 2 also requires explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
 Version 1 had only campaigns, immutable planned trials and import events at
 sequence zero. Version 2 adds the bounded accounting API below. It still has no
-controller generation, general runtime transitions, evidence references,
-result acceptance, recovery dispatcher, backup tool or CLI. Those additions
+controller generation, general runtime transitions, verifier-result references,
+result acceptance, recovery dispatcher, backup tool or CLI. Version 3 adds the
+artifact binding described below. Those additions
 require an explicit store-version migration and further tests; the wider runtime
 contracts below remain proposals. A complete plan snapshot is not a
 successful experiment or an execution authorization. The lock/SQL triggers protect
@@ -117,7 +118,8 @@ Upgrade an existing version 1 store with `PlanStore(directory, migrate=True)`.
 The exact old schema and all plans/import events are validated before migration.
 New tables/triggers and the version bump commit atomically; old rows are never
 rewritten. Normal opening refuses version 1 rather than implicitly modifying it.
-New stores start at version 2. Unknown versions or altered schemas are rejected.
+New stores now start at version 3. Both old versions require explicit migration;
+version 2 accounting is validated before its schema changes. Unknown versions or altered schemas are rejected.
 Take a verified backup before migrating valuable data; no backup tool ships here.
 
 Tests abruptly exit subprocesses before/after prepare, interruption, settlement
@@ -132,8 +134,58 @@ The `objects` module now publishes and revalidates sealed artifact objects using
 both raw-file and payload identities. Exact existing objects require explicit
 file/directory sync reconciliation. See [ARTIFACTS.md](ARTIFACTS.md). This is only
 the publication prerequisite: no SQLite evidence table, attempt binding, accepted
-result, schema migration or recovery transition is added. Slice 3 still requires
-immutable attempt/verifier/task/protocol-bound evidence and atomic event linkage.
+result, schema migration or recovery transition was added in slice 3a. Slice 3b below adds artifact reference/event linkage. Verifier-result evidence
+and acceptance remain future work.
+
+## Immutable artifact bindings (version 3, slice 3b, issue #36)
+
+Open `PlanStore(ledger_directory, objects_directory=object_directory)` to use
+bindings. `record_artifact(event_id, request)` accepts exactly these request fields:
+
+| Field | Check |
+| --- | --- |
+| `attempt_id`, `expected_revision` | Existing preparing attempt at its current accounting revision; no stale first insertion |
+| `campaign_id`, `trial_id`, `task_revision` | Exact immutable planned trial and preparing-event identities |
+| `artifact_ref` | Slice 3a object reference; reread and validate both raw-file and artifact-payload hashes |
+| `verifier_sha256`, `protocol` | Concrete verifier hash and bounded protocol identifier, pinned as synthetic intent |
+
+The artifact must already exist. Before inserting a binding the store validates
+it and reconciles file/directory durability through the object publisher. One
+immutable `artifact_bindings` row is both reference and event, with a foreign key
+to the exact accounting attempt/revision. Its canonical envelope contains schema
+version 1, event ID, request and `binding_sha256`. The returned record is detached.
+There is at most one binding per attempt. No accounting revision, phase, cost,
+reservation or scientific result changes.
+
+Exact same-event/request retries return the original validated binding, including
+after interruption or settlement. Reusing an event or attempt for a different
+binding records a persistent integrity stop, preserves the original, and rejects.
+New preparations/bindings are blocked; interruption/settlement may still resolve
+existing accounting. Event IDs in this API are scoped to artifact bindings.
+Verifier hashes and protocols cannot be rewritten after the first binding.
+
+`artifact_bindings()` checks accounting history, canonical envelope, planned
+identities and every referenced object. Opening a store with bindings requires
+its object directory and performs the same checks. Budget snapshots and new
+preparation also check references; missing or tampered bytes raise an error rather
+than returning an apparently usable budget. Ordinary offline plan snapshots stay
+available with execution disabled. Integrity checks are not protection against
+the controller owner editing both database and files, and no automatic repair or
+cleanup is implemented.
+
+Version 3 migration validates the exact old v1/v2 schema and old records first,
+then adds only the binding table/triggers and version bump in one transaction.
+Existing plans, attempts, events and accounting stops are not rewritten. Tests
+cover abrupt subprocess death before/after binding and v2 migration commits,
+SQL/sync failure, missing/changed objects, stale/conflicting identities, immutable
+rows and byte-for-byte preservation of old records. These are process-crash tests,
+not power-loss proof.
+
+The caller supplies trusted **synthetic intent**. Pinning a verifier hash is not
+proof it executed or authenticated a result; no verifier result is stored here.
+Completed states, result/check coverage validation, runtime request provenance,
+controller generations and recovery remain subsequent work. A binding cannot
+promote a candidate, release its reservation or authorize execution.
 
 ## Scope and invariants
 
@@ -158,7 +210,7 @@ CLI, automatic retry, scheduler service or new Harbor integration in that slice.
 
 ## Records and transaction boundaries
 
-Store schema version 2 is separate from the existing campaign version. The wider
+Store schema version 3 is separate from the existing campaign version. The wider
 record set below is the target contract, not the complete implemented schema.
 All write APIs reject unknown fields and incompatible versions. JSON is bounded,
 finite, canonical and rejects duplicate keys, using existing contract conventions.

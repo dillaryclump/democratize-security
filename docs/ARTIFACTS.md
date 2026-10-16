@@ -55,7 +55,8 @@ these checks do not protect against their trusted owner concurrently modifying f
 
 This API stores artifact bytes only. It neither writes SQLite references nor binds
 an attempt, verifier, task or result. A file or returned reference is not proof of
-execution or successful evaluation. Attempt-bound evidence, atomic ledger linkage,
-recovery and garbage collection remain later work. Tests cover exact retry, changed
+execution or successful evaluation. Store v3 now adds an immutable artifact reference/event linked to a preparing
+attempt and synthetic verifier intent; see [PERSISTENCE.md](PERSISTENCE.md).
+Verifier-result evidence, recovery and garbage collection remain later work. Tests cover exact retry, changed
 and missing bytes, unsafe file types, bounded reads and injected sync failures;
 they do not simulate physical power loss.

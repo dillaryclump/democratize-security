@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from democratize_security.contracts import digest, plan
-from democratize_security.store import APPLICATION_ID, V1_SCHEMA, PlanStore, StoreError
+from democratize_security.store import APPLICATION_ID, V1_SCHEMA, VERSION, PlanStore, StoreError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -288,7 +288,7 @@ def test_explicit_migration_preserves_v1_records(tmp_path, campaign):
     with PlanStore(tmp_path, migrate=True) as store:
         assert store.snapshot(planned["campaign_id"]) == planned
         assert store.attempts() == []
-        assert store._db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert store._db.execute("PRAGMA user_version").fetchone()[0] == VERSION
         store.record_accounting("reserve", prepare(campaign))
     assert old_records(tmp_path) == before
     with PlanStore(tmp_path) as store:
@@ -318,7 +318,9 @@ os._exit(72)
     )
     assert run.returncode == (71 if phase == "before" else 72)
     with sqlite3.connect(tmp_path / "ledger.sqlite3") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == (1 if phase == "before" else 2)
+        assert db.execute("PRAGMA user_version").fetchone()[0] == (
+            1 if phase == "before" else VERSION
+        )
         exists = db.execute("SELECT 1 FROM sqlite_master WHERE name = 'attempts'").fetchone()
         assert bool(exists) == (phase == "after")
     assert old_records(tmp_path) == before

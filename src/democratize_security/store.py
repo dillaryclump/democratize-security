@@ -13,9 +13,10 @@ import stat
 from datetime import UTC, datetime
 from pathlib import Path
 
+from democratize_security import objects as artifact_objects
 from democratize_security.contracts import _unique_pairs, digest, plan
 
-VERSION = 2
+VERSION = 3
 APPLICATION_ID = 0x44534C31
 MAX_PLAN_BYTES = 16 * 1024 * 1024
 SCHEMA = {
@@ -83,6 +84,22 @@ for _operation in ("UPDATE", "DELETE"):
     SCHEMA[_name] = (
         f"CREATE TRIGGER {_name} BEFORE {_operation} ON accounting_stops "
         "BEGIN SELECT RAISE(ABORT, 'immutable ledger record'); END"
+    )
+
+
+V2_SCHEMA = dict(SCHEMA)
+SCHEMA["artifact_bindings"] = """CREATE TABLE artifact_bindings (
+    event_id TEXT PRIMARY KEY NOT NULL,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(attempt_id),
+    revision INTEGER NOT NULL,
+    record_json TEXT NOT NULL,
+    FOREIGN KEY (attempt_id, revision) REFERENCES attempt_events(attempt_id, revision)
+)"""
+for _operation in ("UPDATE", "DELETE"):
+    _name = f"artifact_bindings_no_{_operation.lower()}"
+    SCHEMA[_name] = (
+        f"CREATE TRIGGER {_name} BEFORE {_operation} ON artifact_bindings "
+        "BEGIN SELECT RAISE(ABORT, 'immutable artifact binding'); END"
     )
 
 
@@ -175,9 +192,14 @@ def _reduce(previous: dict | None, request: dict) -> dict:
 class PlanStore:
     """Import and read deterministic offline plans, retaining every trial."""
 
-    def __init__(self, directory: Path, *, migrate: bool = False):
+    def __init__(
+        self, directory: Path, *, migrate: bool = False, objects_directory: Path | None = None
+    ):
         self._lock_fd = None
         self._db = None
+        self._objects_directory = (
+            objects_directory.absolute() if objects_directory is not None else None
+        )
         directory = directory.resolve(strict=True)
         try:
             self._lock_fd = os.open(
@@ -203,12 +225,13 @@ class PlanStore:
             application = self._db.execute("PRAGMA application_id").fetchone()[0]
             objects = self._schema()
             fresh = version == 0 and application == 0 and not objects
-            legacy = version == 1 and application == APPLICATION_ID
+            legacy = version in (1, 2) and application == APPLICATION_ID
+            old_schema = {1: V1_SCHEMA, 2: V2_SCHEMA}.get(version, SCHEMA)
             if legacy and not migrate:
-                raise StoreError("Version 1 requires explicit migrate=True")
-            if not fresh and (version not in (1, VERSION) or application != APPLICATION_ID):
+                raise StoreError(f"Version {version} requires explicit migrate=True")
+            if not fresh and (version not in (1, 2, VERSION) or application != APPLICATION_ID):
                 raise StoreError("Unknown ledger version or application; no automatic migration")
-            if not fresh and objects != (V1_SCHEMA if legacy else SCHEMA):
+            if not fresh and objects != old_schema:
                 raise StoreError("Ledger schema does not match its declared version")
             self._db.execute("PRAGMA foreign_keys=ON")
             journal = self._db.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
@@ -242,11 +265,13 @@ class PlanStore:
                 raise StoreError("Ledger contains orphan records")
             for (campaign_id,) in self._db.execute("SELECT campaign_id FROM campaigns").fetchall():
                 self.snapshot(campaign_id)
+            if legacy and version == 2:
+                self.attempts()  # Reject corrupt accounting before changing the schema.
             if legacy:
                 self._db.execute("BEGIN IMMEDIATE")
                 try:
                     for name, statement in SCHEMA.items():
-                        if name not in V1_SCHEMA:
+                        if name not in old_schema:
                             self._db.execute(statement)
                     self._db.execute(f"PRAGMA user_version={VERSION}")
                     self._db.execute("COMMIT")
@@ -255,6 +280,7 @@ class PlanStore:
                         self._db.execute("ROLLBACK")
                     raise
             self.attempts()
+            self.artifact_bindings()
         except BaseException:
             self.close()
             raise
@@ -403,9 +429,156 @@ class PlanStore:
                 raise StoreError(f"Invalid attempt ledger: {error}") from error
         return states
 
+    def _artifact_request(self, request: dict) -> dict:
+        """Check pinned synthetic intent against the immutable plan and prepare event."""
+        if not isinstance(request, dict) or set(request) != {
+            "attempt_id",
+            "expected_revision",
+            "campaign_id",
+            "trial_id",
+            "task_revision",
+            "verifier_sha256",
+            "protocol",
+            "artifact_ref",
+        }:
+            raise StoreError("Invalid artifact binding request fields")
+        for key in ("attempt_id", "campaign_id", "trial_id", "protocol"):
+            _identifier(request[key])
+        for key in ("task_revision", "verifier_sha256"):
+            if not isinstance(request[key], str) or not re.fullmatch(r"[0-9a-f]{64}", request[key]):
+                raise StoreError("A concrete task/verifier SHA-256 is required")
+        revision = request["expected_revision"]
+        if type(revision) is not int or revision < 1:
+            raise StoreError("Invalid artifact binding revision")
+        row = (
+            self._connection()
+            .execute(
+                "SELECT state_json FROM attempt_events WHERE attempt_id = ? AND revision = ?",
+                (request["attempt_id"], revision),
+            )
+            .fetchone()
+        )
+        if row is None:
+            raise StoreError("Unknown artifact binding attempt/revision")
+        state = json.loads(row[0], object_pairs_hook=_unique_pairs)
+        if state["phase"] != "preparing" or any(
+            state[key] != request[key] for key in ("attempt_id", "campaign_id", "trial_id")
+        ):
+            raise StoreError("Artifact binding does not match preparing attempt")
+        planned = self.snapshot(request["campaign_id"])
+        trial = next(t for t in planned["trials"] if t["trial_id"] == request["trial_id"])
+        if trial["task_revision"] != request["task_revision"]:
+            raise StoreError("Artifact task revision mismatch")
+        if self._objects_directory is None:
+            raise StoreError("Artifact bindings require objects_directory")
+        return artifact_objects.read_artifact(self._objects_directory, request["artifact_ref"])
+
+    def artifact_bindings(self) -> list[dict]:
+        """Revalidate every referenced object; a binding is never an accepted result."""
+        self.attempts()
+        records = []
+        rows = (
+            self._connection()
+            .execute(
+                "SELECT event_id, attempt_id, revision, record_json FROM artifact_bindings "
+                "ORDER BY event_id"
+            )
+            .fetchall()
+        )
+        for event_id, attempt_id, revision, encoded in rows:
+            try:
+                if len(encoded.encode()) > 8192:
+                    raise StoreError("Artifact binding exceeds byte limit")
+                record = json.loads(encoded, object_pairs_hook=_unique_pairs)
+                if not isinstance(record, dict) or set(record) != {
+                    "schema_version",
+                    "event_id",
+                    "request",
+                    "binding_sha256",
+                }:
+                    raise StoreError("Invalid artifact binding envelope")
+                _identifier(event_id)
+                request = record["request"]
+                self._artifact_request(request)
+                expected = {"schema_version": 1, "event_id": event_id, "request": request}
+                expected["binding_sha256"] = digest(expected)
+                if (
+                    encoded != _json(expected)
+                    or attempt_id != request["attempt_id"]
+                    or revision != request["expected_revision"]
+                ):
+                    raise StoreError("Artifact binding identity mismatch")
+                records.append(record)
+            except (ValueError, TypeError, KeyError, OSError, StopIteration) as error:
+                raise StoreError(f"Invalid artifact binding: {error}") from error
+        return records
+
+    def record_artifact(self, event_id: str, request: dict) -> dict:
+        """Pin an artifact and synthetic verifier intent, without changing accounting.
+
+        One immutable row is both the reference and its event. No success phase,
+        verifier result or execution provenance is inferred from this operation.
+        """
+        _identifier(event_id)
+        if not isinstance(request, dict):
+            raise StoreError("Expected an artifact binding request")
+        encoded = _json(request)
+        if len(encoded.encode()) > 4096:
+            raise StoreError("Artifact binding request exceeds byte limit")
+        request = json.loads(encoded)
+        db = self._connection()
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            records = self.artifact_bindings()
+            duplicates = [
+                r
+                for r in records
+                if r["event_id"] == event_id
+                or r["request"]["attempt_id"] == request.get("attempt_id")
+            ]
+            if duplicates:
+                if any(
+                    r["event_id"] != event_id or _json(r["request"]) != encoded for r in duplicates
+                ):
+                    db.execute(
+                        "INSERT OR IGNORE INTO accounting_stops VALUES (?, 'conflicting_identity')",
+                        (event_id,),
+                    )
+                    db.execute("COMMIT")
+                    raise StoreError("Conflicting artifact event or attempt binding")
+                result = duplicates[0]
+            else:
+                if db.execute("SELECT 1 FROM accounting_stops LIMIT 1").fetchone():
+                    raise StoreError("Integrity stop blocks artifact binding")
+                bundle = self._artifact_request(request)
+                current = next(
+                    s for s in self.attempts() if s["attempt_id"] == request["attempt_id"]
+                )
+                if current["revision"] != request["expected_revision"]:
+                    raise StoreError("Stale expected artifact revision")
+                # Reconcile file and directory durability before committing a reference.
+                if (
+                    artifact_objects.publish_artifact(self._objects_directory, bundle)
+                    != request["artifact_ref"]
+                ):
+                    raise StoreError("Artifact publication identity mismatch")
+                result = {"schema_version": 1, "event_id": event_id, "request": request}
+                result["binding_sha256"] = digest(result)
+                db.execute(
+                    "INSERT INTO artifact_bindings VALUES (?, ?, ?, ?)",
+                    (event_id, request["attempt_id"], request["expected_revision"], _json(result)),
+                )
+            db.execute("COMMIT")
+            return result
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+
     def budget_snapshot(self, campaign_id: str) -> dict:
         """Account for synthetic costs; this is not permission to spend."""
         planned = self.snapshot(campaign_id)
+        self.artifact_bindings()
         states = self.attempts()
         own = [s for s in states if s["campaign_id"] == campaign_id]
         held = sum(s["max_cost_cents"] for s in own if s["actual_cost_cents"] is None)
