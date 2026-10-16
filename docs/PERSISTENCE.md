@@ -1,9 +1,9 @@
 # Persistence and crash recovery contract
 
 Status: proposed design for M3, issue #21; **offline plan import and synthetic
-attempt/budget accounting are implemented on this branch**, as described below.
-The external recovery engine remains unimplemented. Integrated with main
-`992b70e` via issue #32; implementation originates in #26/#28/#30. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
+attempt/budget accounting are merged via #33**, as described below.
+The external recovery engine remains unimplemented. Integration #33 merged at
+`d6c2657`; implementation originates in #26/#28/#30. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
 This contract does not approve model execution or change campaign schema v1,
 artifact schema v1, verifier protocol v3, or existing scores. M0/M2 owner
 acceptance, dedicated worker isolation and a finite approved budget remain gates.
@@ -125,6 +125,15 @@ and migration commits. Faults between projection and event writes must roll back
 both. Tests also cover unknown-cost holds, stale revisions, exact/conflicting
 receipts, overrun stops, schema preservation, corruption and append-only events.
 These are offline process-crash tests, not provider recovery or power-loss proof.
+
+## Artifact object publication (slice 3a, issue #34)
+
+The `objects` module now publishes and revalidates sealed artifact objects using
+both raw-file and payload identities. Exact existing objects require explicit
+file/directory sync reconciliation. See [ARTIFACTS.md](ARTIFACTS.md). This is only
+the publication prerequisite: no SQLite evidence table, attempt binding, accepted
+result, schema migration or recovery transition is added. Slice 3 still requires
+immutable attempt/verifier/task/protocol-bound evidence and atomic event linkage.
 
 ## Scope and invariants
 
