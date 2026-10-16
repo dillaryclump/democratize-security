@@ -6,8 +6,10 @@ RUN python -m venv /opt/app \
        --only-binary :all: -r /opt/app-requirements.txt
 ENV PATH=/opt/app/bin:$PATH
 WORKDIR /candidate
-COPY app.py /candidate/app.py
-RUN chown -R 10001:10001 /candidate
-# The root filesystem is read-only. Docker copies files only into volumes, so
-# the submission and the oracle's solution upload need image-declared volumes.
-VOLUME ["/candidate", "/solution"]
+# The root filesystem is read-only and /candidate is a size-bounded tmpfs
+# volume that Docker does not populate from the image: the entrypoint copies
+# this starter in.
+COPY app.py /opt/starter/app.py
+RUN chmod 0755 /opt/starter && chmod 0644 /opt/starter/app.py
+COPY --chmod=0555 seed.sh /opt/seed.sh
+ENTRYPOINT ["/opt/seed.sh"]

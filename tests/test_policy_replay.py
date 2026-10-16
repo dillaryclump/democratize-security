@@ -32,7 +32,15 @@ def test_replay_uses_sealed_bytes_after_source_changes(tmp_path):
         "collector.Dockerfile",
         "docker-compose.yaml",
         "policy.json",
+        "seed.sh",
     ]
+    # The trusted entrypoint seeds the sealed bytes into the bounded volume.
+    dockerfile = (task / "environment/Dockerfile").read_text()
+    assert "COPY policy.json /opt/starter/policy.json\n" in dockerfile
+    assert dockerfile.rstrip().endswith('ENTRYPOINT ["/opt/seed.sh"]')
+    assert (task / "environment/seed.sh").read_bytes() == (
+        TEMPLATE / "environment/seed.sh"
+    ).read_bytes()
     # Replays run under the same reviewed container hardening as the task.
     for name in ("environment/docker-compose.yaml", "tests/docker-compose.yaml"):
         assert (task / name).read_bytes() == (TEMPLATE / name).read_bytes()

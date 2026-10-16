@@ -27,7 +27,9 @@ is accepted. A fresh task copies trusted verifier/configuration files, including
 both reviewed compose files and the trusted artifact collector, so replays run
 with the same container hardening and collect the replayed bytes the same way.
 It puts only sealed policy bytes plus a fixed Dockerfile in the agent build
-context.
+context. That Dockerfile places the bytes under `/opt/starter` and uses the
+task's trusted `seed.sh` entrypoint to copy them into the size-bounded tmpfs
+submission volume, exactly as the task images seed their starters.
 It never copies the original solution or consults the original candidate file.
 The replay agent is always nop; it cannot call a model or modify the submission.
 

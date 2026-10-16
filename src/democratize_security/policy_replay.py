@@ -23,6 +23,8 @@ TRUSTED_FILES = (
     # The trusted collector that extracts the artifact after the agent stops.
     "environment/collect.py",
     "environment/collector.Dockerfile",
+    # The trusted entrypoint that seeds the size-bounded submission volume.
+    "environment/seed.sh",
     "tests/Dockerfile",
     "tests/docker-compose.yaml",
     "tests/test.sh",
@@ -36,6 +38,7 @@ APP_TRUSTED_FILES = (
     "environment/docker-compose.yaml",
     "environment/collect.py",
     "environment/collector.Dockerfile",
+    "environment/seed.sh",
     "tests/Dockerfile",
     "tests/app.Dockerfile",
     "tests/app-requirements.txt",
@@ -57,10 +60,14 @@ AGENT_BASE_IMAGE = (
 
 
 def replay_dockerfile(artifact: str) -> str:
+    # The submission volume is a size-bounded tmpfs Docker does not populate
+    # from the image, so the trusted entrypoint seeds the sealed bytes into it.
     return f"""FROM {AGENT_BASE_IMAGE}
 WORKDIR /candidate
-COPY {artifact} /candidate/{artifact}
-RUN chmod 444 /candidate/{artifact}
+COPY {artifact} /opt/starter/{artifact}
+RUN chmod 0755 /opt/starter && chmod 0444 /opt/starter/{artifact}
+COPY --chmod=0555 seed.sh /opt/seed.sh
+ENTRYPOINT ["/opt/seed.sh"]
 """
 
 

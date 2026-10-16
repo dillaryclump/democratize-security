@@ -20,6 +20,7 @@ import time
 import harbor_spike
 
 from democratize_security.adapters.runners.harbor_audit import (
+    LOG_BYTES,
     audit,
     declared_exec_users,
     declared_limits,
@@ -35,6 +36,7 @@ TRUSTED_FILES = (
     "environment/docker-compose.yaml",
     "environment/collect.py",
     "environment/collector.Dockerfile",
+    "environment/seed.sh",
     "tests/Dockerfile",
     "tests/docker-compose.yaml",
     "tests/test.sh",
@@ -174,13 +176,18 @@ class Listener:
 class Watcher:
     """Record container lifecycle events and inspect each container as it starts.
 
-    With a tamper `job`, also snapshot its forged grades when the agent stops.
+    Named volumes are inspected with the container that mounts them, while they
+    exist. When an agent's main container dies, the size of its log as the
+    daemon serves it is recorded. With a tamper `job`, also snapshot its forged
+    grades at that moment.
     """
 
     def __init__(self, job=None):
         self.job = job
         self.events = []
         self.inspections = {}
+        self.volumes = {}
+        self.agent_log_bytes = {}
         self.forgery = None
         self.process = subprocess.Popen(
             ["docker", "events", "--since", f"{time.time():.3f}", "--filter", "type=container"]
@@ -203,13 +210,51 @@ class Watcher:
                 )
                 if result.returncode == 0:
                     self.inspections[identity] = json.loads(result.stdout)[0]
+                    self._inspect_volumes(self.inspections[identity])
             elif (
-                self.job is not None
-                and event.get("Action") == "die"
+                event.get("Action") == "die"
                 and labels.get("com.docker.compose.service") == "main"
                 and labels.get("com.docker.compose.project", "").endswith("__env")
             ):
-                self._snapshot()
+                # The snapshot races the verifier's startup, so it goes first.
+                if self.job is not None:
+                    self._snapshot()
+                self._measure_log(identity, labels["com.docker.compose.project"])
+
+    def _inspect_volumes(self, container):
+        for mount in container.get("Mounts") or []:
+            name = mount.get("Name")
+            if mount.get("Type") == "volume" and name and name not in self.volumes:
+                result = subprocess.run(
+                    ["docker", "volume", "inspect", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if result.returncode == 0:
+                    self.volumes[name] = json.loads(result.stdout)[0]
+
+    def _measure_log(self, identity, project):
+        # In separate mode Harbor stops main (this `die`) before sidecar
+        # collection and removes it with `compose down` right after that
+        # collection, before verification. This thread is idle then, so the
+        # read normally wins that window of seconds; if the container is
+        # already gone, `docker logs` fails, nothing is recorded and
+        # accept_fill fails closed. Reading stops just past the bound, so an
+        # unbounded log cannot exhaust this process.
+        limit = 4 * LOG_BYTES
+        process = subprocess.Popen(
+            ["docker", "logs", identity], stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+        size = 0
+        while size <= limit:
+            chunk = process.stdout.read(65536)
+            if not chunk:
+                break
+            size += len(chunk)
+        process.kill()
+        if process.wait() == 0 or size > limit:
+            self.agent_log_bytes[project] = size
 
     def _snapshot(self):
         # The agent just stopped and the verifier has not emptied the shared
@@ -299,6 +344,7 @@ def main():
         nonce,
         os.getuid(),
         declared_exec_users(task / "task.toml"),
+        watcher.volumes,
     )
     final = sorted(path.name for path in (trial / "verifier").iterdir())
     summary = {

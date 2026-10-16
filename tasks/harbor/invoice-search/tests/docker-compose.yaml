@@ -20,6 +20,11 @@ services:
     security_opt: ["no-new-privileges:true"]
     pids_limit: 128
     memswap_limit: ${MEMORY:?Harbor must export MEMORY}
+    # Container logs are host files, and the candidate app writes to its
+    # own stdout: every service keeps at most one 1 MiB file.
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "1"}
     # Harbor uploads the collected app here; the verifier publishes its
     # validated copy and the runtime DSN for the app container.
     volumes:
@@ -43,6 +48,9 @@ services:
     mem_limit: 256m
     memswap_limit: 256m
     cpus: 1
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "1"}
     volumes:
       - candidate:/candidate:ro
     command: ["/opt/app/bin/python", "-I", "/opt/launch.py"]

@@ -12,14 +12,25 @@ loopback-only namespace, mount only the project's candidate volume read-only
 containers. Policy v4 admits the agent-side trusted `collector`, which must be
 isolated and bounded the same way, read the agent's candidate volume only
 read-only, and be exec'd into only after the agent's container has died.
+
+Policy v5 requires bounded container storage. Every container log must be one
+capped file, and every `/dev/shm` and tmpfs must declare a size. Beyond those
+and Harbor's binds of the trial directory, the agent, app and collector may
+write only to tmpfs-backed volumes with a declared size. The verifier's own
+volumes are a reported gap: only Harbor, copying from the trial directory, and
+the trusted verifier write them. The trial directory is measured, not required:
+unless its job directory is its own filesystem of at most
+`TRIAL_STORAGE_BYTES`, the record reports `trial_storage_unbounded`, which
+needs host privilege to close.
 """
 
 import json
+import os
 import re
 import tomllib
 from pathlib import Path
 
-POLICY = "harbor-docker-boundary-v4"
+POLICY = "harbor-docker-boundary-v5"
 SIDECAR = "harbor-docker-egress-control-sidecar"
 SIDECAR_CAPS = {"CAP_NET_ADMIN", "CAP_NET_RAW"}
 # The verifier keeps only what Harbor's root housekeeping (emptying the shared
@@ -39,6 +50,16 @@ CANDIDATE = "/candidate"
 # volume (`<agent project>_candidate`), read-only.
 COLLECTOR = "collector"
 AGENT_CANDIDATE = "/agent-candidate"
+# Harbor uploads the oracle's solution into the agent's `<project>_solution`
+# volume; the collector writes its checked copy to `<project>_collected`.
+SOLUTION = "/solution"
+# Storage bounds (v5). Docker's default /dev/shm is 64 MiB; the separate
+# verifier keeps its PostgreSQL cluster in a 256 MiB tmpfs. A worker host closes
+# `trial_storage_unbounded` by mounting each job directory at most this large.
+TRIAL_STORAGE_BYTES = 64 * 1024 * 1024
+TMPFS_BYTES = 256 * 1024 * 1024
+SHM_BYTES = 64 * 1024 * 1024
+LOG_BYTES = 1024 * 1024
 # Harbor-owned log binds, by container target, relative to the trial directory.
 AGENT_BINDS = {
     "/logs/agent": "agent",
@@ -57,6 +78,7 @@ REQUIRED = (
     "least_privilege",
     "bounded_resources",
     "verifier_secret_withheld",
+    "bounded_container_storage",
 )
 
 
@@ -122,6 +144,84 @@ def _relative(source: str, trial_dir: Path) -> str | None:
         return None
 
 
+def _bytes(value) -> int | None:
+    """A Docker or tmpfs size ("1m", "16384k", "67108864") in bytes; None if unbounded."""
+    match = re.fullmatch(r"(\d+)([kmg]?)b?", str(value).strip().lower())
+    if not match or int(match.group(1)) <= 0:
+        return None
+    return int(match.group(1)) * 1024 ** " kmg".index(match.group(2) or " ")
+
+
+def _tmpfs_size(options: str) -> int | None:
+    """The declared tmpfs size in bytes; None if unbounded or not a plain size.
+
+    The kernel applies `size=` and `nr_blocks=` in order, last wins, and treats
+    0 as unlimited, so any `nr_blocks=` is refused rather than modelled.
+    """
+    parts = options.split(",")
+    if any(o.startswith("nr_blocks=") for o in parts):
+        return None
+    sizes = [o.split("=", 1)[1] for o in parts if o.startswith("size=")]
+    return _bytes(sizes[-1]) if sizes else None
+
+
+def _trial_filesystem(trial_dir: Path) -> tuple[bool, int]:
+    """Whether the trial's job directory is its own mount, and that filesystem's size."""
+    stats = os.statvfs(trial_dir)
+    return os.path.ismount(trial_dir.parent), stats.f_blocks * stats.f_frsize
+
+
+def _unbounded(container: dict, volumes: dict, trial_dir: Path) -> list[tuple[str, str]]:
+    """Writable host-storage surfaces without a size bound, as (kind, target).
+
+    Binds inside the trial directory are left to the separate measurement of
+    the trial filesystem (`trial_storage_unbounded`).
+    """
+    host = container["HostConfig"]
+    found = []
+    if host.get("ReadonlyRootfs") is not True and not _bytes(
+        (host.get("StorageOpt") or {}).get("size", "")
+    ):
+        found.append(("rootfs", "/"))
+    log = host.get("LogConfig") or {}
+    config = log.get("Config") or {}
+    size = _bytes(config.get("max-size", ""))
+    if log.get("Type") != "none" and not (
+        log.get("Type") == "json-file"
+        and size is not None
+        and size <= LOG_BYTES
+        and str(config.get("max-file", "1")) == "1"
+    ):
+        found.append(("log", ""))
+    shm = host.get("ShmSize")
+    if host.get("IpcMode") != "none" and not (type(shm) is int and 0 < shm <= SHM_BYTES):
+        found.append(("shm", "/dev/shm"))
+    tmpfs = host.get("Tmpfs") or {}
+    for target, options in tmpfs.items():
+        size = _tmpfs_size(options)
+        if size is None or size > TMPFS_BYTES:
+            found.append(("tmpfs", target))
+    for mount in container.get("Mounts") or []:
+        if not mount["RW"] or mount["Destination"] in tmpfs:
+            continue
+        if mount["Type"] == "bind" and _relative(mount["Source"], trial_dir) is not None:
+            continue
+        volume = volumes.get(mount.get("Name") or "") if mount["Type"] == "volume" else None
+        options = (volume or {}).get("Options") or {}
+        flags = set(options.get("o", "").split(","))
+        # A `bind` flag would mount a host directory whatever the type says.
+        tmpfs_volume = (
+            options.get("type") == "tmpfs"
+            and options.get("device") == "tmpfs"
+            and not flags & {"bind", "rbind"}
+        )
+        size = _tmpfs_size(options.get("o", "")) if tmpfs_volume else None
+        if (volume or {}).get("Driver") == "local" and size is not None and size <= TMPFS_BYTES:
+            continue
+        found.append((mount["Type"], mount["Destination"]))
+    return found
+
+
 def _summary(role: str, container: dict, trial_dir: Path, verifier_id: str | None) -> dict:
     host = container["HostConfig"]
     network = host.get("NetworkMode", "")
@@ -161,6 +261,8 @@ def _summary(role: str, container: dict, trial_dir: Path, verifier_id: str | Non
         "pids_limit": host.get("PidsLimit"),
         "pid_mode": host.get("PidMode") or "",
         "ipc_mode": host.get("IpcMode") or "",
+        "shm_size_bytes": host.get("ShmSize"),
+        "log_config": host.get("LogConfig"),
         "mounts": sorted(mounts, key=lambda m: m["target"]),
     }
 
@@ -175,6 +277,7 @@ def audit(
     secret: str,
     host_uid: int,
     exec_users: list,
+    volumes: dict,
 ) -> dict:
     """Evaluate one trial's observed containers. Missing evidence is incomplete.
 
@@ -182,6 +285,8 @@ def audit(
     `host_uid` owns the trial directories Harbor bind-mounts into both containers.
     `exec_users` are task.toml users that would override the containers' own.
     `limits` may declare an `app` entry from the verifier compose file.
+    `volumes` maps volume names to `docker volume inspect` documents captured
+    while the trial's containers ran.
     """
     agent_project = compose_project(f"{trial_name}__env")
     verifier_project = compose_project(f"{trial_name}__verifier__trial")
@@ -194,6 +299,8 @@ def audit(
 
     candidate_volume = f"{verifier_project}_candidate"
     agent_volume = f"{agent_project}_candidate"
+    solution_volume = f"{agent_project}_solution"
+    collected_volume = f"{agent_project}_collected"
 
     def apps() -> list[dict]:
         return [c for c in by_project[verifier_project] if _labels(c)[1] == APP]
@@ -354,6 +461,26 @@ def audit(
                     ):
                         shared[f"agent_{service}"] = mount["Name"]
                         continue
+                    # Harbor's solution upload target and the collector's output.
+                    if (
+                        project == agent_project
+                        and mount["Type"] == "volume"
+                        and mount.get("Driver") == "local"
+                        and mount["RW"] is True
+                        and (
+                            (
+                                is_main
+                                and mount.get("Name") == solution_volume
+                                and mount["Destination"] == SOLUTION
+                            )
+                            or (
+                                is_collector
+                                and mount.get("Name") == collected_volume
+                                and mount["Destination"] == CANDIDATE
+                            )
+                        )
+                    ):
+                        continue
                     if is_app:
                         raise AssertionError("Unexpected mount in app container")
                     if mount["Type"] == "volume" and mount["Destination"] in declared:
@@ -459,6 +586,16 @@ def audit(
             ):
                 raise AssertionError(f"{role} processes, swap or root filesystem unbounded")
 
+    def storage():
+        observed = [(role, main(project)) for project, role in roles.items()]
+        for role, container in observed + extra():
+            for kind, target in _unbounded(container, volumes, trial_dir):
+                # Only Harbor, from the bounded trial directory, and the trusted
+                # verifier write the verifier's own volumes; reported as a gap.
+                if role == "verifier" and kind == "volume":
+                    continue
+                raise AssertionError(f"{role} storage unbounded: {kind} {target}".strip())
+
     def secret_withheld():
         if not isinstance(secret, str) or not re.fullmatch(r"[0-9a-f]{64}", secret):
             raise Unavailable("No verifier nonce supplied to the audit")
@@ -481,6 +618,7 @@ def audit(
             least_privilege,
             bounded,
             secret_withheld,
+            storage,
         ),
         strict=True,
     ):
@@ -511,6 +649,10 @@ def audit(
             containers.append(summary)
             if role.endswith("_sidecar"):
                 continue
+            unbounded = _unbounded(container, volumes, trial_dir)
+            summary["unbounded_storage"] = [
+                f"{kind} {target}".strip() for kind, target in unbounded
+            ]
             if summary["network"] == "egress_sidecar_namespace":
                 gaps.add("network_via_net_admin_sidecar")
             if _is_root(summary["user"]):
@@ -523,12 +665,22 @@ def audit(
                 gaps.add(f"{role}_writable_rootfs")
             if summary["memory_swap_bytes"] != summary["memory_bytes"]:
                 gaps.add(f"{role}_swap_allowed")
-            if not (container["HostConfig"].get("StorageOpt") or {}).get("size"):
+            if unbounded:
                 gaps.add(f"{role}_storage_unbounded")
             if role == "agent" and any(
                 m["target"] == "/logs/verifier" and m["writable"] for m in summary["mounts"]
             ):
                 gaps.add("agent_can_write_verifier_log_directory")
+    # Harbor bind-mounts the trial directory and copies artifacts into it,
+    # including its unfiltered fallback copy of the agent's /logs/artifacts.
+    try:
+        own, capacity = _trial_filesystem(trial_dir)
+        trial_storage = {"own_filesystem": own, "capacity_bytes": capacity}
+    except OSError:
+        own, trial_storage = False, None
+    # Filesystems without a block limit (ramfs, tmpfs with size=0) report 0.
+    if not own or not 0 < trial_storage["capacity_bytes"] <= TRIAL_STORAGE_BYTES:
+        gaps.add("trial_storage_unbounded")
     complete = all(c["outcome"] in {"pass", "fail"} for c in checks)
     return {
         "schema_version": 1,
@@ -541,6 +693,7 @@ def audit(
         else "incomplete",
         "checks": checks,
         "observed_gaps": sorted(gaps),
+        "trial_storage": trial_storage,
         "containers": sorted(containers, key=lambda c: c["role"]),
         "egress": {k: egress.get(k) for k in ("control_connections", "trial_connections")},
         "security_verdict": "not_evaluated",
