@@ -1,7 +1,8 @@
 # Persistence and crash recovery contract
 
-Status: proposed design for M3, issue #21; **only offline plan import is implemented
-on this branch**, as described below. The recovery engine remains unimplemented. Based on main
+Status: proposed design for M3, issue #21; **offline plan import and synthetic
+attempt/budget accounting are implemented on this branch**, as described below.
+The external recovery engine remains unimplemented. Based on main
 `1124a0c`. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
 This contract does not approve model execution or change campaign schema v1,
 artifact schema v1, verifier protocol v3, or existing scores. M0/M2 owner
@@ -37,14 +38,15 @@ DELETE journaling and foreign keys, and syncs the parent before returning from
 open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
-refuse to open; there is no migration. Plans are limited to 16 MiB canonical JSON.
+refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
+version 2; no other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
-This first schema intentionally has only campaigns, immutable planned trials
-and import events at sequence zero. It has no controller generation, attempt
-state transitions, general event append API, reservations, evidence references,
+Version 1 had only campaigns, immutable planned trials and import events at
+sequence zero. Version 2 adds the bounded accounting API below. It still has no
+controller generation, general runtime transitions, evidence references,
 result acceptance, recovery dispatcher, backup tool or CLI. Those additions
-require an explicit store-version migration and further tests; the wider tables
-and transitions below remain proposals. A complete plan snapshot is not a
+require an explicit store-version migration and further tests; the wider runtime
+contracts below remain proposals. A complete plan snapshot is not a
 successful experiment or an execution authorization. The lock/SQL triggers protect
 cooperating code, not an owner editing files. No sensitive final cases belong here.
 
@@ -54,6 +56,75 @@ a mid-import SQL failure, hold the lock from another process, corrupt stored
 rows/schema, reject writes to immutable records, reopen and re-import plans, and
 check byte limits. These prove local process-crash behavior, not power-loss
 durability or live provider recovery.
+
+## Implemented offline accounting (version 2, issue #29)
+
+This API records synthetic accounting inputs only; it does not authenticate
+provider receipts, resolve candidate/task files, prove worker termination or
+approve spending. Plan snapshots remain unchanged with execution disabled.
+`record_accounting(event_id, request)` supports exactly three actions:
+
+| Action | Required request fields besides `action`, `attempt_id`, `expected_revision` | Result |
+| --- | --- | --- |
+| `prepare` | `campaign_id`, `trial_id`, `max_cost_cents`, `basis_sha256` | At revision 0, create preparing attempt, full cost hold and immutable event together; output revision 1 |
+| `interrupt` | `reason` | Only preparing -> interrupted, recording reason and incrementing revision; unknown cost retains the entire hold |
+| `settle` | `actual_cost_cents`, `receipt_id` | Only an interrupted, unsettled attempt; replace hold with recorded cost and increment revision without changing terminal phase |
+
+Amounts are nonnegative integers in USD cents, not booleans or floats. IDs are
+bounded portable strings. The reservation basis is a lowercase 64-character
+SHA-256 reference to the caller's synthetic cost/limit assumptions; syntax alone
+is not proof that a real dispatch is bounded. Example after importing a campaign:
+
+```python
+trial = saved_plan["trials"][0]
+state = store.record_accounting("reserve-example", {
+    "action": "prepare",
+    "attempt_id": "example-attempt",
+    "expected_revision": 0,
+    "campaign_id": saved_plan["campaign_id"],
+    "trial_id": trial["trial_id"],
+    "max_cost_cents": 0,  # Offline example; not a free model call.
+    "basis_sha256": "a" * 64,  # Synthetic placeholder, never dispatch evidence.
+})
+budget = store.budget_snapshot(saved_plan["campaign_id"])
+assert budget["execution_enabled"] is False
+```
+
+`attempts()` replays immutable accounting events and compares the derived state
+with each saved attempt. Missing/mismatched events, invalid transitions or
+changed projections reject reads and reopening. Import events and scheduled
+trial rows stay immutable; accounting does not remove failures from the denominator.
+There is only one attempt per logical trial in this version. No retries, repairs,
+dispatch, running, verifying or successful completion transitions are accepted.
+
+All accounting mutations use one SQLite transaction. A stale expected revision
+rolls back without changing state, events or funds. Exact repeats of an event ID
+or receipt ID with the original request return its original result without adding
+another event, even after later transitions. A changed request reusing either ID
+records an immutable store-wide integrity stop and raises an error; existing
+charges remain unchanged. That stop survives reopen and has no automatic reset.
+New preparations are blocked, while existing attempts may still be interrupted
+or settled. Reviewed reconciliation/reset procedures remain future work.
+
+Budget snapshots derive held and settled amounts from validated attempt states.
+Any active or unknown-cost attempt blocks another preparation across the store,
+including a zero-value hold. A settlement above its reservation is retained at
+its actual amount and permanently blocks further preparation in that campaign;
+negative available balance is reported honestly. A settled receipt is terminal:
+corrections, credits and receipt authentication are not implemented.
+
+Upgrade an existing version 1 store with `PlanStore(directory, migrate=True)`.
+The exact old schema and all plans/import events are validated before migration.
+New tables/triggers and the version bump commit atomically; old rows are never
+rewritten. Normal opening refuses version 1 rather than implicitly modifying it.
+New stores start at version 2. Unknown versions or altered schemas are rejected.
+Take a verified backup before migrating valuable data; no backup tool ships here.
+
+Tests abruptly exit subprocesses before/after prepare, interruption, settlement
+and migration commits. Faults between projection and event writes must roll back
+both. Tests also cover unknown-cost holds, stale revisions, exact/conflicting
+receipts, overrun stops, schema preservation, corruption and append-only events.
+These are offline process-crash tests, not provider recovery or power-loss proof.
 
 ## Scope and invariants
 
@@ -78,7 +149,8 @@ CLI, automatic retry, scheduler service or new Harbor integration in that slice.
 
 ## Records and transaction boundaries
 
-Proposed store schema version 1 is separate from the existing campaign version.
+Store schema version 2 is separate from the existing campaign version. The wider
+record set below is the target contract, not the complete implemented schema.
 All write APIs reject unknown fields and incompatible versions. JSON is bounded,
 finite, canonical and rejects duplicate keys, using existing contract conventions.
 The frozen campaign and plan identities remain those produced by `contracts.plan`.

@@ -1,5 +1,27 @@
 # Current status and next handoff
 
+## Offline reservations and attempt accounting (2026-10-16 UTC, issue #29)
+
+Branch `milestone/offline-reservations`, stacked on #28, implements store v2:
+explicit atomic v1 migration, preparing/interrupted attempts, maximum-cost holds,
+idempotent settlement, revision checks and immutable accounting events. Unknown
+costs retain their holds; overruns are recorded rather than clipped; conflicting
+event/receipt reuse persists an integrity stop. Replay checks reject mismatches
+between saved attempts and events. All operations remain offline and synthetic.
+
+Local verification: 24 new accounting/migration tests passed, including eight
+subprocess-crash cases and three mid-transaction SQL fault cases. Full locked
+suite: 243 passed, 43 skipped for optional dependencies or unavailable
+PostgreSQL/Docker configuration. Ruff lint/format, package build and diff checks
+passed. Live CI is pending publication; no physical power-loss evidence claimed.
+
+No runner, dispatch, successful evaluation, retry, provider receipt authentication
+or controller-generation fencing is implemented. The design and base ledger
+remain in review (#26/#28); this is another draft slice, not M3 completion.
+Next: review/integrate the stacked persistence work, then durable evidence
+references and the recovery reducer before any runner integration. Preserve
+#17/#22/#25 status changes during integration.
+
 ## Offline plan ledger (2026-10-15, issue #27)
 
 Branch `milestone/offline-plan-ledger` is stacked on persistence design PR #26.
