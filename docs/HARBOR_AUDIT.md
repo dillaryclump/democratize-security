@@ -1,6 +1,6 @@
 # Harbor worker boundary audit
 
-Status: M2 prerequisite, audit policy `harbor-docker-boundary-v4`. This records
+Status: M2 prerequisite, audit policy `harbor-docker-boundary-v5`. This records
 what one trusted Docker daemon actually configured for one reviewed, model-free
 Harbor 0.24.0 trial. It is not a container-escape proof and does not approve
 hostile or model-generated candidates. v3 is v2 plus rules for the application
@@ -11,7 +11,9 @@ observed start event after the agent stopped. The named candidate volume is
 admitted only when an app is observed. v4 adds the agent-side trusted
 `collector` ([Trusted artifact collection](#trusted-artifact-collection)), held
 to the same standards as main containers, and requires that it extracted only
-after the agent's container died.
+after the agent's container died. v5 requires bounded container storage
+([Bounded storage](#bounded-storage)) and measures whether the trial directory
+is its own bounded filesystem.
 
 ## Run
 
@@ -31,8 +33,11 @@ random TCP port on all host interfaces to count connections. The CI
 All gating inputs come from the controller, never from the candidate:
 
 - `docker events` for container start, die and exec, with each container inspected as it
-  starts. `adapters/runners/harbor_audit.py` (stdlib only, no Harbor import)
+  starts, and each named volume it mounts inspected while it exists.
+  `adapters/runners/harbor_audit.py` (stdlib only, no Harbor import)
   evaluates them; the core package does not import runner adapters.
+- The trial directory's filesystem (`statvfs`), and whether its job directory
+  is a mount of its own.
 - A host TCP listener. A probe container on a fresh user-defined bridge must
   reach it first; otherwise a zero count during the trial proves nothing and the
   audit is incomplete.
@@ -61,18 +66,20 @@ Acceptance requires all of:
 | `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus at most one `collector` in the agent project and one `app` in the verifier project; agent, verifier, app and collector images all differ; neither app nor collector shares a PID, IPC or UTS namespace; every started trial container was inspected |
 | `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts; v4: at least one exec into the collector, and every one after that `die`, so extraction happened only after the worker stopped |
 | `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
-| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write, and its only tmpfs is a `noexec` `/tmp`; v4: with a collector present, the agent main mounts the local `<agent project>_candidate` volume read-write at `/candidate` and the collector mounts it read-only at `/agent-candidate`, plus its own image-declared output volume, nothing else and no tmpfs; no other named volume anywhere |
+| `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write, and its only tmpfs is a `noexec` `/tmp`; v4: with a collector present, the agent main mounts the local `<agent project>_candidate` volume read-write at `/candidate` and the collector mounts it read-only at `/agent-candidate`, plus its own output volume, nothing else and no tmpfs; v5: the agent main may also mount `<agent project>_solution` read-write at `/solution`, and the collector's output is `<agent project>_collected` at `/candidate`; no other named volume anywhere |
 | `declared_limits` | Memory and CPU equal `task.toml`; the app's and collector's equal their compose declarations (a missing declaration is incomplete) |
 | `network_isolation` | Both main containers use `network_mode: none` (v2; v1 also accepted Harbor's sidecar namespace); v3: the app joins only the verifier main's namespace (`container:<main id>`), so it has loopback only; v4: the collector uses `network_mode: none` |
 | `no_observed_egress` | Positive control observed; no trial connection reached the host |
 | `least_privilege` | Non-root (numeric forms such as `00` count as root); capabilities dropped (`ALL`) with the verifier keeping only `CHOWN`, `DAC_OVERRIDE` and `FOWNER` and the app and collector none; the last `no-new-privileges` option is true; the agent, app and collector have explicit `uid:gid` users different from the controller's, and the app's uid differs from the verifier's, which must then be numeric; task.toml sets no exec user |
 | `bounded_resources` | PID limit set, swap equal to memory, read-only root filesystem, for main containers, the app and the collector |
 | `verifier_secret_withheld` | The verifier nonce appears in no inspected container configuration, the app's and collector's included |
+| `bounded_container_storage` | v5: for main containers, the app and the collector, every container log is one `json-file` of at most 1 MiB (or none), `/dev/shm` is at most 64 MiB, every tmpfs declares a size of at most 256 MiB, and the root filesystem is read-only. Besides binds inside the trial directory, every writable volume of the agent, app and collector is a local tmpfs volume declaring a size of at most 256 MiB, with its inspection observed; the verifier's own volumes are reported, not required |
 
 Missing containers, events, the positive control or the nonce yield
 `incomplete`, never pass. Evidence stores trial-relative mount sources, not host
-paths. Every run records each container's image ID, limits, user, capabilities
-and mounts.
+paths. Every run records each container's image ID, limits, user, capabilities,
+mounts, log configuration, `/dev/shm` size and unbounded storage surfaces, and
+the trial filesystem's capacity.
 
 ## Hardened task configuration
 
@@ -93,7 +100,10 @@ pinned source and were confirmed against live `docker inspect` output.
 | capabilities | drop `ALL` | drop `ALL`, add `CHOWN`, `DAC_OVERRIDE`, `FOWNER` | Harbor's root housekeeping (emptying the shared verifier log directory, fixing host ownership) ignores failures; without these, planted files could survive |
 | `no-new-privileges`, `init`, `pids_limit` | yes, 64 | yes, 128 | Processes are reaped and bounded |
 | `memswap_limit` | `${MEMORY}` | `${MEMORY}` | Harbor exports the declared memory; no extra swap |
-| `read_only` | yes | yes | Writable paths are volumes (agent: `/candidate`, a named volume the trusted collector reads, and `/solution`; verifier: `/candidate`, `/logs/artifacts`) because `docker cp` cannot write a read-only root or tmpfs; `/tmp` is a `noexec` tmpfs |
+| `read_only` | yes | yes | Writable paths are volumes (agent: `/candidate`, a named volume the trusted collector reads, and `/solution`; verifier: `/candidate`, `/logs/artifacts`) because `docker cp` cannot write a read-only root or a `--tmpfs` mount; `/tmp` is a `noexec` tmpfs |
+| `logging` | `json-file`, one 1 MiB file | same | Container logs are host files; the agent can write its init's stdout and the app its own |
+| volumes | `candidate`, `solution`: tmpfs, 16 MiB, 4096 inodes | Harbor's and the image's | The agent's volumes are size-bounded tmpfs that `docker cp` can still write |
+| `healthcheck` | `/tmp/.seeded` exists | none | Docker does not copy image content into a tmpfs volume; the trusted entrypoint seeds the starter, and Harbor's `up --wait` holds the agent until it has |
 
 The verifier image sets `test.sh` and `check.py` executable at build time,
 because Harbor's runtime `chmod` silently fails on a read-only root. `test.sh`
@@ -141,7 +151,7 @@ Remaining v2 gaps:
   write there non-grading.
 - `*_storage_unbounded`: Docker cannot enforce `storage_mb` here.
   Tmpfs is size-limited, but volumes and the writable layer are bounded only by
-  the host.
+  the host. v5 narrows this; see [Bounded storage](#bounded-storage).
 
 The verifier image's declared `/var/lib/postgresql/data` volume is writable but
 unused. Harbor removes anonymous volumes on its default delete.
@@ -168,13 +178,15 @@ worker host and an approved budget.
 
 ## Application tasks
 
-`scripts/harbor_apps.py` audits every trial it runs (eleven per task: oracle,
-nop, unsafe, both replays and the six extraction controls) under v4, with one
+`scripts/harbor_apps.py` audits every trial it runs (twelve per task: oracle,
+nop, unsafe, both replays, the six extraction controls and the storage control)
+under v5, with one
 positive control and one host listener for the whole run, and fails unless all
 pass with zero trial connections and exactly one app. App and collector limits
 (memory, CPU and PIDs) come from the trusted verifier and agent compose files.
-The app and collector add the gaps `app_storage_unbounded` and
-`collector_storage_unbounded`. Results are in APPLICATION_TASKS.md.
+Under v4 the app and collector added the gaps `app_storage_unbounded` and
+`collector_storage_unbounded`; v5 bounds both and requires it. Results are in
+APPLICATION_TASKS.md.
 
 ## Trusted artifact collection
 
@@ -193,7 +205,8 @@ runtime step 5 for that submission artifact:
    collector: `collect.py` opens the one allowlisted path with `O_NOFOLLOW`
    and `O_NONBLOCK`, requires a regular, singly linked file whose size is
    within the task's bound (4096 bytes for `policy.json`, 65536 for `app.py`)
-   before reading, and writes a fresh `0444` copy into its own volume.
+   before reading, and writes a fresh `0444` copy into its own 1 MiB tmpfs
+   volume.
 3. The task's only artifact entry names `service = "collector"`, so Harbor
    moves only that checked copy through the host. Anything rejected leaves no
    file; the verifier then grades a missing submission, a bound zero.
@@ -223,8 +236,50 @@ used is the remaining availability limit. CI
 [run 38795922164](https://github.com/dillaryclump/democratize-security/actions/runs/38795922164)
 at `e546181` passed all of this, with every trial audited under v4.
 
+## Bounded storage
+
+Under v4 a candidate could fill host disk through several channels. v5 bounds
+each one a container can reach, in every task (policy and application):
+
+| Channel | Writer | Bound |
+| --- | --- | --- |
+| The agent's `/candidate` and `/solution` | agent (the solution volume is root-owned) | tmpfs volumes of 16 MiB and 4096 inodes each, freed with the trial |
+| The collector's output | trusted collector | tmpfs volume of 1 MiB |
+| `/tmp` | agent, app, verifier | tmpfs of 16 MiB (agent, app), 128 MiB (policy verifier) or 256 MiB (application verifier), unchanged |
+| `/dev/shm` | any process | Docker's default 64 MiB, now checked |
+| Container logs | the agent (writing its init's stdout), the app (its own stdout) | one `json-file` of 1 MiB per container |
+| Root filesystems | none | read-only (unchanged) |
+
+All tmpfs pages are also charged to the writing container's memory limit. The
+tmpfs-backed volumes would start empty, since Docker copies image content only
+into ordinary volumes, so each agent image (and each generated replay image)
+seeds its starter through a trusted entrypoint (`environment/seed.sh`), and a
+healthcheck makes Harbor's `up --wait` hold the agent until the starter is in
+place. The nop controls, which grade the unmodified starter, depend on that.
+
+The `fill` control of `scripts/harbor_apps.py` proves the bounds live. Its
+agent requests 128 MiB on each of `/candidate`, `/tmp` and `/dev/shm`, and
+records where each write stopped. It writes 8 MiB to its init's stdout and then
+submits the reference app. Acceptance requires each write to have stopped
+between half its bound and the bound. The container log, read from the daemon
+when the agent's container died, must hold at most 1 MiB. The app must still
+pass every check.
+
+Two surfaces remain bounded only by the host:
+
+- The trial directory. Harbor bind-mounts it into the containers (`/logs/*`)
+  and copies artifacts into it, including its unfiltered fallback copy of the
+  agent's `/logs/artifacts`. Bounding it per trial needs host privilege:
+  mounting each job directory on its own filesystem of at most 64 MiB before
+  Harbor runs. The audit measures this and reports `trial_storage_unbounded`
+  until a worker host does it. The scripts in this repository do not mount
+  anything.
+- The verifier's own volumes (`verifier_storage_unbounded`). Only Harbor,
+  copying from the trial directory, and the trusted verifier write them.
+
 ## Next bounded task
 
-Keep this audit, the hostile extraction controls and the sealed replays as
-regressions. Model-generated candidates still need a dedicated worker host and
-an approved budget.
+Keep this audit, the hostile extraction and storage controls and the sealed
+replays as regressions. A dedicated worker host must give each trial a bounded
+filesystem of its own, which closes `trial_storage_unbounded`. Model-generated
+candidates still need that host and an approved budget.

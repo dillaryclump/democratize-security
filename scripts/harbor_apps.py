@@ -12,15 +12,20 @@ For each requested task (default: all three), under trusted host observation:
   reject each one, so nothing is collected and the verifier grades a bound zero.
   A valid app saved as 0600 must still pass, as must a valid app whose agent
   also left a sparse file, a link to the canary, a FIFO and an unreadable file
-  in /logs/artifacts, none of which may be staged for the verifier.
+  in /logs/artifacts, none of which may be staged for the verifier;
+- a storage control writes past every container-level bound the agent can
+  reach (its submission volume, /tmp, /dev/shm and its container log) before
+  submitting the reference app. Each write must stop at its bound, the log the
+  daemon serves must stay within its cap, and the app must still pass.
 
 Every trial must also pass the host-observed boundary audit, with no host
-listener connection during the whole run. Eleven finite trials per task, no retries.
+listener connection during the whole run. Twelve finite trials per task, no retries.
 """
 
 import base64
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -30,7 +35,10 @@ import harbor_audit
 import harbor_spike
 
 from democratize_security.adapters.runners.harbor_audit import (
+    LOG_BYTES,
+    SHM_BYTES,
     audit,
+    compose_project,
     declared_exec_users,
     declared_limits,
 )
@@ -100,6 +108,25 @@ FALLBACK = (
     "kill -TERM 1"
 )
 MARKER = "extraction control in place"
+# Fills each writable surface well past its bound (128 MiB requested), records
+# where the write stopped, frees the space, then writes 8 MiB to its init's
+# stdout, which is the container log, and submits the reference app.
+FILL = (
+    "fill() {{\n"
+    '  dd if=/dev/zero of="$1" bs=65536 count=2048 2>/dev/null || true\n'
+    '  size=$(stat -c %s "$1")\n'
+    '  rm -f "$1"\n'
+    '  echo "$size"\n'
+    "}}\n"
+    "candidate=$(fill /candidate/fill)\n"
+    "tmp=$(fill /tmp/fill)\n"
+    "shm=$(fill /dev/shm/fill)\n"
+    "head -c 8388608 /dev/zero | tr '\\0' a > /proc/1/fd/1\n"
+    "cp /solution/app.py /candidate/app.py\n"
+    'echo "{marker} candidate=$candidate tmp=$tmp shm=$shm"'
+)
+# The agent compose file's bounds; a unit test holds them to it.
+FILL_BOUNDS = {"candidate": 16 * 1024 * 1024, "tmp": 16 * 1024 * 1024, "shm": SHM_BYTES}
 
 
 def expected_outcomes(task, control):
@@ -215,6 +242,31 @@ def accept_logs(job):
     return "nothing staged"
 
 
+def accept_fill(job, agent_log_bytes):
+    """Every write must have stopped at its bound; the log must stay capped."""
+    trials = [path.parent for path in job.glob("*/result.json")]
+    if len(trials) != 1:
+        raise ValueError("expected exactly one trial result")
+    trial = trials[0]
+    log = seal(trial / "agent", ["oracle.txt"])["files"][0]["content_base64"]
+    match = re.search(
+        rf"{MARKER} candidate=(\d+) tmp=(\d+) shm=(\d+)",
+        base64.b64decode(log).decode(errors="replace"),
+    )
+    if not match:
+        raise ValueError("storage control did not report its writes")
+    written = dict(zip(FILL_BOUNDS, map(int, match.groups()), strict=True))
+    # Half the bound or more shows the write ran into the bound, not an error.
+    for surface, size in written.items():
+        if not FILL_BOUNDS[surface] // 2 <= size <= FILL_BOUNDS[surface]:
+            raise ValueError(f"{surface} write was not stopped at its bound")
+    # Read from the daemon when the agent's container died, after 8 MiB.
+    observed = agent_log_bytes.get(compose_project(f"{trial.name}__env"))
+    if observed is None or observed > LOG_BYTES:
+        raise ValueError("agent container log was not observed within its cap")
+    return {**{f"{k}_bytes": v for k, v in written.items()}, "agent_log_bytes": observed}
+
+
 def detect_fallback(job):
     """The fallback control must really force the copy, and acceptance must catch it."""
     trials = [path.parent for path in job.glob("*/result.json")]
@@ -293,6 +345,9 @@ def run_task(name, trials):
     nonce = harbor_spike.run_trial(fallback, "oracle", output, "logs-fallback")
     trials.append((output / "logs-fallback", fallback, nonce))
     extraction["logs-fallback"] = detect_fallback(output / "logs-fallback")
+    fill = output / "task-fill"
+    prepare_extraction(task, fill, FILL.format(marker=MARKER), marker=False)
+    extraction["fill"] = trial("oracle", fill, "oracle", "fill")
     return {"task": name, "controls": results, "replays": replays, "extraction": extraction}
 
 
@@ -312,6 +367,10 @@ def main(names):
             summaries.append(run_task(name, trials))
     finally:
         watcher.stop()
+    for summary in summaries:
+        summary["extraction"]["fill"]["storage"] = accept_fill(
+            OUTPUT / summary["task"] / "fill", watcher.agent_log_bytes
+        )
     egress = {"control_connections": control_connections, "trial_connections": listener.take()}
     listener.socket.close()
     audits = []
@@ -335,6 +394,7 @@ def main(names):
                 nonce,
                 os.getuid(),
                 declared_exec_users(task_dir / "task.toml"),
+                watcher.volumes,
             )
         )
     summary = {"tasks": summaries, "audits": audits}

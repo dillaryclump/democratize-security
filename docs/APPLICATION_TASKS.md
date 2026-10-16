@@ -34,7 +34,7 @@ uv sync --locked --group harbor
 uv run --locked --group harbor python scripts/harbor_apps.py invoice-read
 ```
 
-Pass one or more task names (default: all three). Per task, eleven finite trials
+Pass one or more task names (default: all three). Per task, twelve finite trials
 with no retries, each bounded to 600 seconds. Existing
 `.research/harbor-apps/<task>` outputs cause refusal. Use a disposable Linux
 Docker host: the run briefly listens on a random host TCP port. CI job
@@ -52,7 +52,11 @@ the policy task: `network_mode: none`, uid `10001:10001`, no capabilities,
 read-only root. The oracle `solve.sh` copies the reference app into place.
 `/candidate` is a named volume that the trusted `collector` service reads after
 Harbor stops the agent's container; only its checked copy of `app.py` leaves
-the agent environment (see HARBOR_AUDIT.md, Trusted artifact collection).
+the agent environment (see HARBOR_AUDIT.md, Trusted artifact collection). That
+volume and `/solution` are 16 MiB tmpfs volumes, so the image's trusted
+entrypoint seeds the starter into `/candidate`, and Harbor waits for it through
+a healthcheck. Every container keeps one 1 MiB log (HARBOR_AUDIT.md, Bounded
+storage).
 
 The separate verifier has two services, built from `tests/`:
 
@@ -147,8 +151,11 @@ sparse file, a link to the canary, a FIFO and a mode-000 file in
 `/logs/artifacts`; nothing from there may be staged for the verifier. A last
 control kills its own container's init after leaving a small file there, which
 forces Harbor's unfiltered fallback copy; it must show the file was staged and
-that host acceptance rejects the trial. All eleven trials per task are
-audited.
+that host acceptance rejects the trial. A storage control requests 128 MiB on
+each of `/candidate`, `/tmp` and `/dev/shm` and writes 8 MiB to its init's
+stdout. Each write must stop between half its bound and the bound. The container
+log the daemon serves must hold at most 1 MiB, and the reference app it then
+submits must still pass. All twelve trials per task are audited.
 
 ## Consistency rules
 
@@ -235,7 +242,10 @@ evidence of record for the final rules.
   `database_configuration` is a sanity check here, not a candidate property.
 - Debian's `python3` and PostgreSQL packages remain mutable; audits record built
   image IDs.
-- Storage stays bounded only by the host for volumes and writable layers.
+- Container storage is bounded (audit v5). The trial directory, which Harbor
+  bind-mounts at `/logs/*` and copies artifacts into, and the verifier's own
+  volumes are bounded only by the host: `trial_storage_unbounded` and
+  `verifier_storage_unbounded` in every audit.
 - Harbor 0.24.0 itself moves artifacts through the host unchecked. The
   trusted collector closes this for the submission: Harbor only ever transfers
   the collector's checked copy, and `run.py`'s own checks are a second line.
@@ -254,8 +264,8 @@ evidence of record for the final rules.
   directory shows that, and the `logs-fallback` control proves the detection.
   The copy itself has already used host storage by then. Nothing ever reads
   that directory, so the residual impact is availability, the same class as the
-  host-storage limit below, and needs per-trial storage quotas on the dedicated
-  worker host.
+  trial-directory limit above. It needs each trial's job directory on its own
+  bounded filesystem, which takes host privilege on the dedicated worker host.
 - Any other post-agent verifier exception (Harbor or infrastructure) is still
   possible; host acceptance rejects it, and scoring must count it as a
   failure, never exclude or retry it.

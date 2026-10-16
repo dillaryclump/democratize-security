@@ -1,6 +1,7 @@
 """Offline checks for the reviewed tamper control; live Docker runs only in CI."""
 
 import json
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -100,3 +101,72 @@ def test_committed_oracle_solution_is_executable_by_the_unprivileged_agent():
     ).stdout
     assert staged.startswith("100755 ")
     assert (ROOT / path).stat().st_mode & 0o005 == 0o005
+
+
+def fake_docker(tmp_path, monkeypatch, script):
+    """A `docker` on PATH that runs `script`; only the watcher's helpers call it."""
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    docker = directory / "docker"
+    docker.write_text(f"#!/bin/sh\n{script}\n")
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{directory}:{os.environ['PATH']}")
+
+
+def bare_watcher(control):
+    # No `docker events` process: only the per-container helpers are exercised.
+    watcher = object.__new__(control["Watcher"])
+    watcher.volumes, watcher.agent_log_bytes = {}, {}
+    return watcher
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        ("printf abc; printf de >&2", 5),
+        # An unbounded log is read only just past the bound, never whole.
+        ("head -c 67108864 /dev/zero", "over"),
+        # A container already removed is not a measurement.
+        ("echo 'No such container' >&2; exit 1", None),
+    ],
+)
+def test_watcher_measures_agent_logs_within_a_bound(
+    control, tmp_path, monkeypatch, script, expected
+):
+    fake_docker(tmp_path, monkeypatch, script)
+    watcher = bare_watcher(control)
+    watcher._measure_log("abc", "trial__env")
+    measured = watcher.agent_log_bytes.get("trial__env")
+    if expected == "over":
+        limit = 4 * control["LOG_BYTES"]
+        assert limit < measured <= limit + 65536
+    else:
+        assert measured == expected
+
+
+def test_watcher_inspects_each_named_volume_once(control, tmp_path, monkeypatch):
+    calls = tmp_path / "calls"
+    fake_docker(
+        tmp_path,
+        monkeypatch,
+        f'echo "$@" >> {calls}\n'
+        'printf \'[{"Name": "%s", "Driver": "local", "Options": null}]\' "$3"',
+    )
+    watcher = bare_watcher(control)
+    container = {
+        "Mounts": [
+            {"Type": "volume", "Name": "trial__env_candidate"},
+            {"Type": "bind", "Source": "/x"},
+            {"Type": "volume", "Name": "trial__env_candidate"},
+        ]
+    }
+    watcher._inspect_volumes(container)
+    watcher._inspect_volumes(container)
+    assert watcher.volumes == {
+        "trial__env_candidate": {
+            "Name": "trial__env_candidate",
+            "Driver": "local",
+            "Options": None,
+        }
+    }
+    assert calls.read_text() == "volume inspect trial__env_candidate\n"

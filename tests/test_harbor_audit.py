@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from democratize_security.adapters.runners import harbor_audit
 from democratize_security.adapters.runners.harbor_audit import (
     REQUIRED,
     SIDECAR,
+    TRIAL_STORAGE_BYTES,
     audit,
     compose_project,
     declared_exec_users,
@@ -26,6 +28,29 @@ EGRESS = {"control_connections": 1, "trial_connections": 0}
 PROJECT = "com.docker.compose.project"
 SECRET = "d" * 64
 HOST_UID = 1001
+AGENT_PROJECT = compose_project(f"{TRIAL}__env")
+
+
+def tmpfs_volume(name, options):
+    """Shaped like `docker volume inspect` for the reviewed tmpfs-backed volumes."""
+    return {
+        "Name": name,
+        "Driver": "local",
+        "Options": {"type": "tmpfs", "device": "tmpfs", "o": options},
+    }
+
+
+VOLUMES = {
+    f"{AGENT_PROJECT}_candidate": tmpfs_volume(
+        f"{AGENT_PROJECT}_candidate", "size=16m,nr_inodes=4096,mode=0755,uid=10001,gid=10001"
+    ),
+    f"{AGENT_PROJECT}_solution": tmpfs_volume(
+        f"{AGENT_PROJECT}_solution", "size=16m,nr_inodes=4096,mode=0755,nosuid,nodev"
+    ),
+    f"{AGENT_PROJECT}_collected": tmpfs_volume(
+        f"{AGENT_PROJECT}_collected", "size=1m,nr_inodes=64,mode=0755,uid=10001,gid=10001"
+    ),
+}
 
 
 def container(cid, project, service, *, image, user="", memory=0, binds=(), volumes=()):
@@ -59,6 +84,8 @@ def container(cid, project, service, *, image, user="", memory=0, binds=(), volu
             "NanoCpus": 1_000_000_000 if memory else 0,
             "PidsLimit": 64 if main else None,
             "StorageOpt": None,
+            "ShmSize": 64 * 1024 * 1024,
+            "LogConfig": {"Type": "json-file", "Config": {"max-file": "1", "max-size": "1m"}},
         },
         "Mounts": [
             {"Type": "bind", "Source": str(source), "Destination": target, "RW": True}
@@ -105,7 +132,6 @@ def observed(tmp_path):
             ("/logs/verifier", trial / "verifier"),
             ("/logs/artifacts", trial / "artifacts/logs/artifacts"),
         ],
-        volumes=["/candidate", "/solution"],
     )
     verifier = container(
         "verifier",
@@ -119,10 +145,11 @@ def observed(tmp_path):
     )
     verifier["HostConfig"]["CapAdd"] = ["CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_FOWNER"]
     verifier["HostConfig"]["PidsLimit"] = 128
-    # The submission is in a named volume the trusted collector reads.
+    # The submission is in a named volume the trusted collector reads; Harbor
+    # uploads the oracle's solution into another. Both are bounded tmpfs.
     agent_volume = f"{agent_project}_candidate"
-    agent["Mounts"] = [m for m in agent["Mounts"] if m["Destination"] != "/candidate"]
     agent["Mounts"].append(volume_mount(agent_volume, "/candidate", writable=True))
+    agent["Mounts"].append(volume_mount(f"{agent_project}_solution", "/solution", writable=True))
     collector = container(
         "collector",
         agent_project,
@@ -130,7 +157,9 @@ def observed(tmp_path):
         image="sha256:" + "e" * 64,
         user="10001:10001",
         memory=64 * 1024 * 1024,
-        volumes=["/candidate"],
+    )
+    collector["Mounts"].append(
+        volume_mount(f"{agent_project}_collected", "/candidate", writable=True)
     )
     collector["HostConfig"].update(
         NetworkMode="none",
@@ -162,10 +191,28 @@ def observed(tmp_path):
     return trial, containers, events
 
 
-def run(trial, containers, events, egress=EGRESS, secret=SECRET, exec_users=(), limits=LIMITS):
+def run(
+    trial,
+    containers,
+    events,
+    egress=EGRESS,
+    secret=SECRET,
+    exec_users=(),
+    limits=LIMITS,
+    volumes=VOLUMES,
+):
     inspections = list(containers.values())
     return audit(
-        TRIAL, trial, inspections, events, limits, egress, secret, HOST_UID, list(exec_users)
+        TRIAL,
+        trial,
+        inspections,
+        events,
+        limits,
+        egress,
+        secret,
+        HOST_UID,
+        list(exec_users),
+        volumes,
     )
 
 
@@ -176,16 +223,27 @@ def outcomes(record):
 def test_hardened_harbor_shape_passes_with_only_harbor_owned_gaps(observed, tmp_path):
     record = run(*observed)
     assert record["outcome"] == "pass", record
-    assert record["policy"] == "harbor-docker-boundary-v4"
+    assert record["policy"] == "harbor-docker-boundary-v5"
     assert [c["id"] for c in record["checks"]] == list(REQUIRED)
     assert record["security_verdict"] == "not_evaluated"
-    # Gaps that remain are Harbor's shared log mount and unenforced storage.
+    # Gaps that remain: Harbor's shared log mount, the verifier's own volumes
+    # and a trial directory that is not its own bounded filesystem.
     assert record["observed_gaps"] == [
         "agent_can_write_verifier_log_directory",
-        "agent_storage_unbounded",
-        "collector_storage_unbounded",
+        "trial_storage_unbounded",
         "verifier_storage_unbounded",
     ]
+    verifier = next(c for c in record["containers"] if c["role"] == "verifier")
+    assert verifier["unbounded_storage"] == [
+        "volume /candidate",
+        "volume /logs/artifacts",
+        "volume /var/lib/postgresql/data",
+    ]
+    assert {
+        c["role"]: c["unbounded_storage"]
+        for c in record["containers"]
+        if c is not verifier and not c["role"].endswith("_sidecar")
+    } == {"agent": [], "collector": []}
     # Evidence carries trial-relative mount sources, never host paths.
     assert str(tmp_path) not in json.dumps(record)
     agent = next(c for c in record["containers"] if c["role"] == "agent")
@@ -276,7 +334,7 @@ def test_boundary_violation_fails(observed, mutation, check):
     elif mutation == "named_volume":
         verifier["Mounts"][-1]["Name"] = "shared-cache"
     elif mutation == "undeclared_volume":
-        agent["Config"]["Volumes"].pop("/solution")
+        verifier["Config"]["Volumes"].pop("/var/lib/postgresql/data")
     elif mutation == "extra_tmpfs":
         host["agent"]["Tmpfs"]["/candidate"] = "rw,noexec,size=1m"
     elif mutation == "executable_tmpfs":
@@ -464,7 +522,7 @@ def test_app_container_shape_passes(observed_app, tmp_path):
             "writable": False,
         }
     ]
-    assert "app_storage_unbounded" in record["observed_gaps"]
+    assert "app_storage_unbounded" not in record["observed_gaps"]
     assert str(tmp_path) not in json.dumps(record)
 
 
@@ -710,8 +768,161 @@ def test_collector_without_declared_limits_is_incomplete(observed):
 def test_collector_is_summarized(observed):
     record = run(*observed)
     collector = next(c for c in record["containers"] if c["role"] == "collector")
-    volume = compose_project(f"{TRIAL}__env") + "_candidate"
     assert {(m["source"], m["target"], m["writable"]) for m in collector["mounts"]} == {
-        ("<volume>", "/candidate", True),
-        (f"<volume:{volume}>", "/agent-candidate", False),
+        (f"<volume:{AGENT_PROJECT}_collected>", "/candidate", True),
+        (f"<volume:{AGENT_PROJECT}_candidate>", "/agent-candidate", False),
     }
+
+
+@pytest.mark.parametrize(
+    ("role", "mutation"),
+    [
+        ("agent", "log_unbounded"),
+        ("agent", "log_two_files"),
+        ("agent", "log_too_large"),
+        ("agent", "log_local_driver"),
+        ("agent", "shm_too_large"),
+        ("agent", "shm_unset"),
+        ("agent", "tmpfs_without_size"),
+        ("agent", "tmpfs_percentage"),
+        ("agent", "tmpfs_too_large"),
+        ("agent", "candidate_plain_volume"),
+        ("agent", "candidate_uninspected"),
+        ("agent", "candidate_too_large"),
+        ("agent", "solution_plain_volume"),
+        ("agent", "anonymous_volume"),
+        ("collector", "collected_plain_volume"),
+        ("collector", "log_unbounded"),
+        ("verifier", "log_unbounded"),
+        ("verifier", "tmpfs_without_size"),
+        ("app", "log_unbounded"),
+        ("app", "shm_too_large"),
+    ],
+)
+def test_unbounded_storage_fails(observed_app, role, mutation):
+    trial, containers, events = copy.deepcopy(observed_app)
+    volumes = copy.deepcopy(VOLUMES)
+    container, host = containers[role], containers[role]["HostConfig"]
+    if mutation == "log_unbounded":
+        host["LogConfig"] = {"Type": "json-file", "Config": {}}
+    elif mutation == "log_two_files":
+        host["LogConfig"]["Config"]["max-file"] = "2"
+    elif mutation == "log_too_large":
+        host["LogConfig"]["Config"]["max-size"] = "2m"
+    elif mutation == "log_local_driver":
+        # The local driver keeps five 20 MiB files by default.
+        host["LogConfig"] = {"Type": "local", "Config": {}}
+    elif mutation == "shm_too_large":
+        host["ShmSize"] = 1024 * 1024 * 1024
+    elif mutation == "shm_unset":
+        host["ShmSize"] = None
+    elif mutation == "tmpfs_without_size":
+        host["Tmpfs"]["/tmp"] = "rw,noexec,nosuid"
+    elif mutation == "tmpfs_percentage":
+        host["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,size=50%"
+    elif mutation == "tmpfs_too_large":
+        host["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,size=1g"
+    elif mutation == "candidate_plain_volume":
+        volumes[f"{AGENT_PROJECT}_candidate"]["Options"] = None
+    elif mutation == "candidate_uninspected":
+        del volumes[f"{AGENT_PROJECT}_candidate"]
+    elif mutation == "candidate_too_large":
+        volumes[f"{AGENT_PROJECT}_candidate"]["Options"]["o"] = "size=1g,uid=10001"
+    elif mutation == "solution_plain_volume":
+        volumes[f"{AGENT_PROJECT}_solution"]["Options"] = {}
+    elif mutation == "anonymous_volume":
+        # Admitted by mount_scope as image-declared, but unbounded host storage.
+        container["Config"]["Volumes"] = {"/cache": {}}
+        container["Mounts"].append(
+            {"Type": "volume", "Name": "f" * 64, "Destination": "/cache", "RW": True}
+        )
+    else:
+        volumes[f"{AGENT_PROJECT}_collected"]["Options"]["type"] = "none"
+    record = run(trial, containers, events, limits=APP_LIMITS, volumes=volumes)
+    assert record["outcome"] == "fail", record
+    assert {c["id"]: c["outcome"] for c in record["checks"] if c["outcome"] != "pass"} == {
+        "bounded_container_storage": "fail"
+    }
+    assert f"{role}_storage_unbounded" in record["observed_gaps"]
+
+
+def test_app_task_shape_has_bounded_container_storage(observed_app):
+    record = run(*observed_app, limits=APP_LIMITS)
+    assert outcomes(record)["bounded_container_storage"] == "pass"
+    # The verifier's candidate handoff volume is only the verifier's to write.
+    verifier = next(c for c in record["containers"] if c["role"] == "verifier")
+    assert "volume /candidate" in verifier["unbounded_storage"]
+
+
+@pytest.mark.parametrize(
+    ("observation", "gap"),
+    [
+        ((True, TRIAL_STORAGE_BYTES), False),
+        ((True, 1024 * 1024), False),
+        ((True, TRIAL_STORAGE_BYTES + 4096), True),
+        ((False, 1024 * 1024), True),
+        (OSError(), True),
+    ],
+)
+def test_trial_filesystem_is_measured(observed, monkeypatch, observation, gap):
+    def measure(trial_dir):
+        if isinstance(observation, Exception):
+            raise observation
+        return observation
+
+    monkeypatch.setattr(harbor_audit, "_trial_filesystem", measure)
+    record = run(*observed)
+    # A measurement, not a required check: closing it needs host privilege.
+    assert record["outcome"] == "pass", record
+    assert ("trial_storage_unbounded" in record["observed_gaps"]) is gap
+    if isinstance(observation, Exception):
+        assert record["trial_storage"] is None
+    else:
+        assert record["trial_storage"] == {
+            "own_filesystem": observation[0],
+            "capacity_bytes": observation[1],
+        }
+
+
+def test_trial_filesystem_reads_the_job_directory_mount(tmp_path):
+    trial = tmp_path / "job" / "trial"
+    trial.mkdir(parents=True)
+    own, capacity = harbor_audit._trial_filesystem(trial)
+    assert own is False and capacity > 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1m", 1024 * 1024),
+        ("16384k", 16 * 1024 * 1024),
+        ("67108864", 64 * 1024 * 1024),
+        ("1g", 1024**3),
+        ("1MB", 1024 * 1024),
+        ("0", None),
+        ("50%", None),
+        ("1.5m", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_sizes_parse_like_docker_and_tmpfs(value, expected):
+    assert harbor_audit._bytes(value) == expected
+
+
+@pytest.mark.parametrize("mutation", ["solution_on_collector", "collected_on_main", "read_only"])
+def test_agent_volumes_are_admitted_only_where_reviewed(observed, mutation):
+    trial, containers, events = copy.deepcopy(observed)
+    agent, collector = containers["agent"], containers["collector"]
+    if mutation == "solution_on_collector":
+        collector["Mounts"].append(
+            volume_mount(f"{AGENT_PROJECT}_solution", "/solution", writable=True)
+        )
+    elif mutation == "collected_on_main":
+        agent["Mounts"].append(
+            volume_mount(f"{AGENT_PROJECT}_collected", "/collected", writable=True)
+        )
+    else:
+        next(m for m in agent["Mounts"] if m["Destination"] == "/solution")["RW"] = False
+    record = run(trial, containers, events)
+    assert outcomes(record)["mount_scope"] == "fail", record

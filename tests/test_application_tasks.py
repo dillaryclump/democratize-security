@@ -564,3 +564,65 @@ def test_logs_controls_require_nothing_staged(apps, tmp_path):
     for line in ("truncate -s 1G", "ln -s {canary}", "mkfifo", "install -m 000"):
         assert line in apps["LOGS"]
     assert apps["FALLBACK"].rstrip().endswith("kill -TERM 1")
+
+
+def test_fill_control_is_a_reviewed_script(apps, tmp_path):
+    script = apps["FILL"].format(marker=apps["MARKER"])
+    for surface in ("/candidate/fill", "/tmp/fill", "/dev/shm/fill"):
+        assert f"$(fill {surface})" in script
+    # 128 MiB requested per surface, far past every bound, and 8 MiB of log.
+    assert "bs=65536 count=2048" in script
+    assert "head -c 8388608 /dev/zero | tr '\\0' a > /proc/1/fd/1" in script
+    hostile = tmp_path / "task"
+    apps["prepare_extraction"](task("invoice-read"), hostile, script, marker=False)
+    solve = (hostile / "solution/solve.sh").read_text()
+    report = f'echo "{apps["MARKER"]} candidate=$candidate tmp=$tmp shm=$shm"'
+    assert solve.rstrip().endswith(report)
+    assert "cp /solution/app.py /candidate/app.py" in solve
+    # The bounds acceptance holds the writes to are the compose file's.
+    compose = (task("invoice-read") / "environment/docker-compose.yaml").read_text()
+    assert '      o: "size=16m,nr_inodes=4096,mode=0755,uid=10001,gid=10001' in compose
+    assert "      - /tmp:rw,noexec,nosuid,size=16m\n" in compose
+    assert apps["FILL_BOUNDS"] == {
+        "candidate": 16 * 1024 * 1024,
+        "tmp": 16 * 1024 * 1024,
+        "shm": 64 * 1024 * 1024,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "no_report", "candidate_over", "tmp_short", "shm_over", "log_over", "log_unobserved"],
+)
+def test_fill_acceptance(apps, tmp_path, mutation):
+    from democratize_security.adapters.runners.harbor_audit import compose_project
+
+    trial = tmp_path / "fill" / "task-fill__AbC"
+    (trial / "agent").mkdir(parents=True)
+    (trial / "result.json").write_text("{}")
+    mib = 1024 * 1024
+    written = {"candidate": 16 * mib - 8192, "tmp": 16 * mib - 4096, "shm": 64 * mib}
+    if mutation == "candidate_over":
+        written["candidate"] = 16 * mib + 65536
+    elif mutation == "tmp_short":
+        # Stopped long before the bound: an error, not the bound, ended it.
+        written["tmp"] = 65536
+    elif mutation == "shm_over":
+        written["shm"] = 128 * mib
+    line = f"{apps['MARKER']} " + " ".join(f"{k}={v}" for k, v in written.items())
+    (trial / "agent/oracle.txt").write_text("" if mutation == "no_report" else f"{line}\n")
+    logs = {compose_project("task-fill__AbC__env"): 900_000}
+    if mutation == "log_over":
+        logs[compose_project("task-fill__AbC__env")] = 4 * mib
+    elif mutation == "log_unobserved":
+        logs = {}
+    if mutation is None:
+        assert apps["accept_fill"](trial.parent, logs) == {
+            "candidate_bytes": written["candidate"],
+            "tmp_bytes": written["tmp"],
+            "shm_bytes": written["shm"],
+            "agent_log_bytes": 900_000,
+        }
+    else:
+        with pytest.raises(ValueError):
+            apps["accept_fill"](trial.parent, logs)

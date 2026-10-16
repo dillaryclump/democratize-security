@@ -61,12 +61,14 @@ those pre-existing bundles. Base images are now digest-pinned, but apt packages
 remain mutable, even though Harbor/Python dependencies are locked. The
 [boundary audit](HARBOR_AUDIT.md) found that Harbor's `no-network` still permitted
 DNS and ICMP and that its containers ran as root. The task's reviewed compose
-hardening now closes those gaps. Storage requests are still not enforced.
+hardening now closes those gaps. Harbor's `storage_mb` requests are still not
+enforced; container storage is instead bounded directly (audit v5), while the
+trial directory still needs a bounded filesystem on the worker host.
 The spike has no recovery controller, adversarial containment proof, private tests,
 production identity, or independent application HTTP assessment. A killed host
 process may require container cleanup; use disposable runners.
 
-Next: retain the sealed policy replay regression and the v4 boundary audit. The
+Next: retain the sealed policy replay regression and the v5 boundary audit. The
 read/list/export application tasks now run under the hardened layout with the
 independent HTTP/database verifier; see APPLICATION_TASKS.md for their
 fresh-replay evidence. Every task now collects its artifact through a trusted
