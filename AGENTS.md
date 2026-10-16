@@ -3,7 +3,7 @@
 ## Required orientation
 
 1. Read `README.md` and `docs/PROJECT.md` for purpose and product scope.
-2. Read `docs/STATUS.md` for actual implementation, next work and blockers.
+2. Read `docs/STATUS.md` for actual implementation, next work and blockers, and `docs/COORDINATION.md` before claiming work.
 3. Read `docs/ARCHITECTURE.md` and `docs/THREAT_MODEL.md` before changing boundaries.
 4. Read `docs/RESEARCH_PROTOCOL.md` and `docs/CONTRACTS.md` before touching evaluation.
 5. Read `docs/ROADMAP.md`, `docs/DEVELOPMENT.md`, relevant decisions and the assigned issue.
@@ -18,6 +18,7 @@ Dillon owns architecture, security assumptions, budget and acceptance. AI agents
 
 ## Work rules
 
+- Before editing, check remote main, open PRs and task issues; claim one bounded issue with execution owner/session, branch, scope, dependencies and next action. Recheck for competing work before publishing. Claims are advisory, not locks; preserve other agents' changes. See `docs/COORDINATION.md`.
 - Make one bounded change per branch/PR. Read the current branch, worktree status and relevant files first. Preserve unrelated work.
 - Keep the Python core independent of Harbor, GEPA, model providers and benchmark internals. Add dependencies only for a working milestone and commit the updated `uv.lock`.
 - Prefer explicit data contracts over premature services or abstraction forests. One process, one active trial, SQLite plus content-addressed artifacts are the initial runtime design.
@@ -38,3 +39,8 @@ Every PR states: problem; change; requirement covered; tests actually run and th
 ## Immediate next work
 
 Read docs/REFERENCE.md for the implemented synthetic reference and public verifier (protocol v3). Read docs/ARTIFACTS.md for the M2 artifact prerequisite and read docs/WORKER_PROBE.md for the implemented offline host probe. Read docs/HARBOR.md for the pinned, model-free separate-verifier policy spike. Read docs/SEALED_REPLAY.md for sealed replay and docs/HARBOR_AUDIT.md for the hardened container layout, nonce-bound verifier evidence and the v5 boundary audit. Read docs/APPLICATION_TASKS.md for the three implemented application tasks (read, list/search, CSV export), their isolated candidate container, reviewed controls and replays. Every Harbor task collects its submission artifact through the trusted collector described in docs/HARBOR_AUDIT.md and excludes Harbor's re-upload of the agent-written `/logs/artifacts` directory while the agent's container accepts execs; host acceptance rejects any trial where an agent forced Harbor's unfiltered fallback (ARCHITECTURE.md runtime step 5), all proven for the application tasks by hostile extraction controls; the policy task shares the byte-identical collector, configuration, acceptance and unit tests. Container storage (submission volumes, `/tmp`, `/dev/shm`, container logs) is size-bounded and audited, proven by the storage control. Keep all of these as regressions. Next: a dedicated worker host that mounts each trial's job directory on its own bounded filesystem (the audit reports `trial_storage_unbounded` until then; it needs host privilege, which the repository scripts deliberately do not use), owner review of the M2 evidence and of the M0 contract defaults, then a dedicated worker host and an approved finite model budget before any agent execution. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.
+
+Read docs/PERSISTENCE.md before changing store.py. Store v2 persists offline
+plans and synthetic preparation/interruption/settlement only. Review issue #32
+integration first, then durable evidence references and recovery rules. Do not
+treat a saved plan or cost reservation as authorization to execute a trial.

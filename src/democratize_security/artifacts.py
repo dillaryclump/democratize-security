@@ -175,18 +175,29 @@ def load(path: Path) -> dict:
 
 
 def write_new(bundle: dict, destination: Path) -> None:
-    """Publish a complete file without ever replacing an existing artifact."""
+    """Durably publish without replacement in an existing trusted directory.
+
+    An error after publication can leave a complete destination behind. Callers
+    must inspect it rather than assuming failure means nothing was published.
+    """
     validate(bundle)
     data = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
-    fd, name = tempfile.mkstemp(prefix=".artifact-", dir=destination.parent)
+    directory_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(name, destination)  # Atomic publication, fails if destination exists.
+        fd, name = tempfile.mkstemp(prefix=".artifact-", dir=destination.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.link(name, destination)  # Atomic publication; never replaces a file.
+        finally:
+            os.unlink(name)
+        # File fsync alone does not persist the new directory entry. Also persist
+        # removal of the temporary name before acknowledging successful publication.
+        os.fsync(directory_fd)
     finally:
-        os.unlink(name)
+        os.close(directory_fd)
 
 
 def bind_evidence(bundle: dict, verifier_sha256: str, result: dict) -> dict:
