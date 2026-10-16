@@ -39,14 +39,15 @@ open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
 refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
-version 3; version 2 also requires explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
+version 4; versions 2 and 3 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
 Version 1 had only campaigns, immutable planned trials and import events at
 sequence zero. Version 2 adds the bounded accounting API below. It still has no
 controller generation, general runtime transitions, verifier-result references,
 result acceptance, recovery dispatcher, backup tool or CLI. Version 3 adds the
-artifact binding described below. Those additions
-require an explicit store-version migration and further tests; the wider runtime
+artifact binding described below. Version 4 adds immutable offline evidence
+linkage, still without accepted results or runtime authentication. These additions
+require an explicit store-version migration; the wider runtime
 contracts below remain proposals. A complete plan snapshot is not a
 successful experiment or an execution authorization. The lock/SQL triggers protect
 cooperating code, not an owner editing files. No sensitive final cases belong here.
@@ -118,8 +119,8 @@ Upgrade an existing version 1 store with `PlanStore(directory, migrate=True)`.
 The exact old schema and all plans/import events are validated before migration.
 New tables/triggers and the version bump commit atomically; old rows are never
 rewritten. Normal opening refuses version 1 rather than implicitly modifying it.
-New stores now start at version 3. Both old versions require explicit migration;
-version 2 accounting is validated before its schema changes. Unknown versions or altered schemas are rejected.
+New stores now start at version 4. All old versions require explicit migration;
+old accounting and, for v3, artifact bindings are validated before schema changes. Unknown versions or altered schemas are rejected.
 Take a verified backup before migrating valuable data; no backup tool ships here.
 
 Tests abruptly exit subprocesses before/after prepare, interruption, settlement
@@ -185,9 +186,65 @@ The caller supplies trusted **synthetic intent**. Pinning a verifier hash is not
 proof it executed or authenticated a result; no verifier result is stored here.
 The [offline evidence contract](EVIDENCE.md) now validates report/check coverage
 and binds expected identities before serialization; it adds no database writes.
-Completed states, durable result storage, runtime request provenance,
-controller generations and recovery remain subsequent work. A binding cannot
+Version 4 below adds durable offline evidence linkage. Completed states,
+authenticated result acceptance, runtime request provenance, controller
+generations and recovery remain subsequent work. A binding cannot
 promote a candidate, release its reservation or authorize execution.
+
+## Immutable offline evidence bindings (version 4, issue #42)
+
+Open `PlanStore(ledger_directory, objects_directory=artifact_directory,
+evidence_directory=evidence_directory)` for evidence linkage. Use existing durable
+controller-owned directories; no candidate may modify them. Artifacts and evidence
+may share a directory, but use distinct reference kinds and validation contracts.
+
+`record_evidence(event_id, request)` takes exactly these fields:
+
+| Field | Check |
+| --- | --- |
+| `attempt_id`, `expected_revision` | Current preparing attempt, at the same revision pinned by its artifact binding |
+| `artifact_binding_sha256` | Exact digest of that attempt's independently loaded immutable artifact binding |
+| `verification_request_id` | Bounded identifier, unique across all evidence bindings in this store |
+| `evidence_ref` | Existing bounded canonical offline evidence object, with raw object and envelope hashes |
+
+The store resolves expected campaign/trial/task/artifact/verifier context from
+its artifact binding, revalidating the artifact bytes, then validates the evidence
+against that context and the caller's expected request identity. It reconciles
+evidence file/directory durability before committing one immutable reference/event
+row. The envelope has schema version 1, kind `offline_evidence_binding`, event ID,
+request and binding digest. SQL foreign keys bind it to the artifact event and
+accounting attempt/revision. There is at most one observation per attempt. Later
+partial-report completion/replacement is not supported by this offline API.
+
+This stores a **synthetic offline observation**, not a trusted runtime result.
+The caller supplies the request identity; this is not a recorded pre-dispatch
+intent and cannot authenticate a verifier or prove it ran. No phase, revision,
+cost, reservation or acceptance changes, even for a complete passing report.
+Failed/incomplete reports retain every recorded outcome. Candidate promotion and
+completed-result reporting must not use these records as authenticated results.
+
+Exact same-event/request retries return the revalidated original, even after
+interruption or settlement. Reusing an event ID, attempt or verification request
+for a different record persists an integrity stop without replacing the original.
+The stop blocks new preparation/artifact/evidence binding; existing accounting can
+still be interrupted/settled. Event IDs are scoped to this evidence table.
+
+`evidence_bindings()` checks accounting history, artifact bindings/bytes, canonical
+row/projection identities and evidence files on every call. Reopening a ledger,
+budget snapshots and new preparation perform the same validation. Missing or
+changed objects raise errors; an orphan file never becomes a ledger record by
+being present. Plan snapshots remain offline and do not report result acceptance.
+
+Explicit migration validates existing v1/v2/v3 schemas and applicable records,
+then adds missing tables/triggers and bumps to v4 in one transaction. Old records
+are not rewritten. V3 artifact corruption rejects migration before its schema
+changes. Tests cover v1/v2/v3 migration, SQL/sync faults, process death around v4
+migration and evidence commits, stale/foreign/conflicting identities, tampering,
+immutable rows and preservation of accounting and reports. These tests do not
+prove power-loss durability, worker provenance or live recovery.
+
+Next: reviewed trusted runtime provenance and immutable verification intent,
+accepted-result lifecycle rules, recovery decisions and controller fencing.
 
 ## Scope and invariants
 
@@ -212,7 +269,7 @@ CLI, automatic retry, scheduler service or new Harbor integration in that slice.
 
 ## Records and transaction boundaries
 
-Store schema version 3 is separate from the existing campaign version. The wider
+Store schema version 4 is separate from the existing campaign version. The wider
 record set below is the target contract, not the complete implemented schema.
 All write APIs reject unknown fields and incompatible versions. JSON is bounded,
 finite, canonical and rejects duplicate keys, using existing contract conventions.

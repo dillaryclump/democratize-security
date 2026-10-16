@@ -8,7 +8,10 @@ Branch `milestone/verifier-evidence-contract` adds report validation and canonic
 evidence envelopes (#38, PR #39); this new contract is not yet merged.
 Stacked branch `milestone/evidence-objects` adds durable offline evidence object
 publication/read/reconciliation (#40), also not yet merged. No ledger linkage or
-trusted runtime provenance is added.
+trusted runtime provenance is added by #40.
+Stacked branch `milestone/evidence-ledger` adds explicit store v4 migration and
+immutable offline evidence linkage (#42), not yet merged. Runtime provenance
+and accepted/completed-result semantics remain unimplemented.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before editing.
 See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
@@ -77,15 +80,17 @@ at #37 head `5b31696`; #37 is merged.
 Evidence contract #38 local validation: 39 focused tests, including parity for
 all 6,561 check-outcome combinations; full suite 480 passed, 32 infrastructure
 skips. Ruff check/format and build passed; core imports also passed without site
-packages. Its separate PR records CI for the new revision.
+packages. All CI passed in [run 38916744794](https://github.com/dillaryclump/democratize-security/actions/runs/38916744794)
+at #39 head `bc58fd2`; #39 remains in review.
 
 ## Next bounded work and gates
 
 1. Keep M2 owner acceptance in #19 separate from the merged implementation.
 2. Review the offline [evidence contract](EVIDENCE.md) (#38): strict report/check
    accounting, unchanged v3 scoring, and binding/request identity checks. No result
-   persistence or authentication is added. Then implement durable result objects
-   and ledger linkage, trusted runtime provenance, and the recovery reducer with
+   authentication is added. Review stacked offline object storage (#41) and
+   ledger linkage (#42), then implement trusted runtime provenance/verification
+   intent, accepted-result lifecycle rules and the recovery reducer with
    controller-generation fencing using synthetic observations.
 3. Before runner integration, review the persistence contract and prove the above
    crash windows. Before model execution, obtain M0/M2 owner acceptance, a
@@ -97,9 +102,9 @@ not bound the host job directory; a dedicated host must provide a separate bound
 filesystem per trial. No privileged mounting is performed by repository scripts.
 The public fixtures are not a protected holdout; all containers share a host kernel.
 
-M3 is partial: offline plans, synthetic accounting and artifact bindings persist
-on this branch. No durable
-accepted-result/evidence registry, full recovery engine, production dispatcher,
+M3 is partial: offline plans, synthetic accounting, artifact bindings and offline
+evidence linkage persist on this branch. No authenticated accepted-result
+registry, full recovery engine, production dispatcher,
 protected final evaluator, paid pilot, demonstrated benchmark gain or GEPA search
 exists. Production identity, license, branch protection and vulnerability-reporting
 setup remain owner decisions.
@@ -127,8 +132,31 @@ reconciliation. No automatic cleanup, ledger migration or runner changes.
 Local validation: 30 focused tests passed; full suite 482 passed and 54 skipped
 (optional dependencies, PostgreSQL and Docker prerequisites unavailable). Locked
 sync, Ruff check/format, package build and diff whitespace checks passed. Skips
-are not integration evidence; CI must validate the published revision.
+are not integration evidence. All eight jobs passed in
+[CI 38954132208](https://github.com/dillaryclump/democratize-security/actions/runs/38954132208)
+at #41 head `cb42757`; #41 remains in review.
 
-Next: review #39 then this stacked slice; implement immutable evidence ledger
-linkage with crash tests and an explicit trusted runtime provenance boundary,
-then recovery/controller fencing. Owner acceptance remains separate in #19.
+Next: review #39, #41 and offline ledger linkage (#42), then implement a trusted
+runtime provenance boundary and recovery/controller fencing. Owner acceptance remains separate in #19.
+
+## Offline evidence ledger handoff (#42)
+
+Store v4 adds immutable reference/events, unique per attempt and verification
+request. Reopen/read/budget/new-preparation checks revalidate both artifact and
+evidence bytes against ledger-selected identities. Exact retry is a no-op;
+conflicting event/attempt/request identities persist a stop. Neither complete
+passes nor partial/failed reports change accounting, phase or acceptance.
+V1-v3 require explicit migration; existing records are preserved. A synthetic
+request ID recorded alongside evidence is not pre-dispatch intent or proof that
+any trusted verifier ran.
+
+Focused tests cover reference integrity, immutable/projection checks, conflicting
+identities, failure/incomplete preservation, SQL/sync errors and process crashes
+around evidence and migration commits. Next: review this offline prerequisite,
+then establish trusted runtime provenance, verification intent, accepted-result
+semantics and recovery/controller fencing. #19 remains an owner gate.
+
+Local validation for #42: 39 focused tests passed; full locked suite 521 passed,
+54 skipped (optional dependencies/PostgreSQL/Docker unavailable). Locked sync,
+Ruff check/format, package build and whitespace checks passed. CI must verify
+this new revision; the prerequisite CI above is not evidence for #42.
