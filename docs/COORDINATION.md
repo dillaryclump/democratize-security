@@ -39,6 +39,7 @@ Use HANDOFF_TEMPLATE.md. Link the PR, exact tested commit/run, unavailable check
 As of 2026-10-16 UTC, integration #33 merged at `d6c2657` with all eight CI
 jobs passing. It includes #22/#23/#25 and #26 -> #28 -> #30 alongside the merged
 collector #17 and storage #31. Source commits and branches are retained; stacked
-#28/#30 are closed with their integration disposition. Issue #34 owns the next
-artifact-object publication slice on `milestone/artifact-objects`. Follow live
+#28/#30 are closed with their integration disposition. Artifact object publication #35 is also merged at `dd7fe70` after all eight CI
+jobs passed. Issue #36 owns immutable artifact bindings on
+`milestone/artifact-bindings`. Follow live
 issue/PR state before editing overlapping persistence or status files.
