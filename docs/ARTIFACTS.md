@@ -19,7 +19,9 @@ uv run --locked research seal candidates/example --file app.py --file requiremen
 uv run --locked research inspect-artifact .research/candidate.json
 ```
 
-The example assumes those input files exist; no such candidate is shipped yet. The output parent must exist. Publication uses a complete temporary file and an atomic no-overwrite link; an existing destination is never replaced. Permissions default to private temporary-file permissions. This is not a durable artifact database or protection from a controller-owner rewriting its own files.
+The example assumes those input files exist; no such candidate is shipped yet. The output parent must already exist durably and remain under controller ownership throughout publication. Publication flushes and fsyncs a complete temporary file, creates an atomic no-overwrite link, removes the temporary name, and fsyncs the parent directory before returning success. An existing destination is never replaced. Permissions default to private temporary-file permissions. Durability requires a POSIX filesystem and storage stack that honor file and directory fsync; unsupported or failed syncs propagate as errors. This is not a durable artifact database or protection from a controller-owner rewriting its own files.
+
+An error or crash after the link can leave a complete destination even though publication was not acknowledged. Do not delete or overwrite that destination on retry: load and validate it, compare its identity with the expected bundle, and reconcile persistence before recording success. A retry encountering it raises `FileExistsError`, which alone is not proof of durable publication. A crash can also leave a temporary `.artifact-*` name; it is not an accepted artifact. SQLite transactions, startup reconciliation and orphan cleanup remain future work. Fault-injection tests cover file-sync failure before publication and directory-sync failure after publication; they are not physical power-loss tests.
 
 ## Evidence binding
 

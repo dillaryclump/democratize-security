@@ -26,7 +26,7 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | Contracts | `src/democratize_security/contracts.py` | Implemented v1 offline campaign validation/planning; expand with versioned records |
 | CLI | `src/democratize_security/cli.py` | Implemented `validate`, `plan`, `seal` and `inspect-artifact`; no execution CLI |
 | Controller | future `controller/` within Python package | Reserve budgets, schedule finite trials, persist transitions; never import workload code |
-| Store | future `store/` | SQLite metadata, append-only events and content-addressed artifacts; backup/recovery |
+| Store | `src/democratize_security/store.py` | Implemented offline plans, immutable events and synthetic reservation/settlement accounting; durable evidence references, full recovery and backup remain future work |
 | Runner adapters | `adapters/runners/` | Harbor first; current reviewed-data spike is `scripts/harbor_spike.py`, not a production adapter. The stdlib Harbor boundary audit lives in `adapters/runners/harbor_audit.py`; the core must not import it. `scripts/harbor_apps.py` runs the three application tasks in `tasks/harbor/invoice-*`. See HARBOR.md, HARBOR_AUDIT.md and APPLICATION_TASKS.md |
 | Benchmark adapters | future `adapters/benchmarks/` | Prepare/inject/extract/normalize; preserve original scoring and task provenance |
 | Proposer adapters | future `adapters/proposers/` | Manual candidate initially, GEPA later; development feedback only |
@@ -54,6 +54,11 @@ Trusted authentication resolves organization membership on the server. Transacti
 The verifier must check roles/policies, actual API response bodies and CSV contents, including connection reuse and failed transactions. An app that returns no data to anyone is not a successful protection mechanism. See the access matrix and exclusions in `THREAT_MODEL.md`.
 
 ## Storage and lifecycle
+
+The proposed M3 [persistence/recovery contract](PERSISTENCE.md) and
+[ADR 0004](decisions/0004-persistence-recovery.md) refine the lifecycle below
+with durable dispatch intent and explicit reconciliation. The wider runtime semantics remain a design for review. Store v2 implements
+only offline plan and synthetic accounting records; it grants no execution permission.
 
 Git stores reviewed source, public task metadata and campaign configurations. SQLite initially stores trial identities, state transitions, reservations, usage and evidence locations. Artifacts live in a separate content-addressed directory. Private final cases live outside the repository, its history and agent images. Backups must preserve the database and artifact index together.
 

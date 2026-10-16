@@ -25,6 +25,10 @@ Validation does not verify a task hash against external files, model availabilit
 
 ## Future contracts, not implemented
 
+See [PERSISTENCE.md](PERSISTENCE.md) for the proposed store schema, transition
+table, crash recovery, budget accounting and implementation acceptance tests.
+It leaves the implemented offline campaign schema v1 unchanged.
+
 | Contract | Required fields/semantics |
 | --- | --- |
 | Candidate | ID, parent ID, patch/bundle hash, changed paths, rationale, proposer config/history |
