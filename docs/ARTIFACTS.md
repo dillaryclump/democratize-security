@@ -32,3 +32,30 @@ These helpers do not grade results, sign records or certify that the artifact wa
 ## Next integration gate
 
 Select and validate one runner version. Transfer only the sealed bundle into a fresh restricted worker; never execute candidate code in the controller. Verify the bundle before materialization, preserve worker/image provenance, run the protected verifier against that exact deployment, bind its result and store it outside candidate reach. Prove tamper rejection and clean replay on three public development tasks before paid research. No unattended execution is enabled by this module.
+
+## Content-addressed objects (M3 slice 3a)
+
+`objects.publish_artifact(directory, bundle)` stores canonical sealed-bundle JSON
+at `<object_sha256>.json` in an existing durable controller-owned directory.
+It returns a detached reference with `reference_version: 1`, `kind: sealed_artifact`,
+artifact schema version, raw object SHA-256, byte length and artifact payload
+SHA-256. The two hashes identify different bytes and are never interchangeable.
+`objects.read_artifact(directory, reference)` rechecks both hashes, length,
+canonical encoding and the complete artifact schema on every read. Only regular,
+singly linked files are accepted; symlinks, special files and oversized objects
+fail without an unbounded read. The directory itself cannot be a symlink.
+
+Publication uses `write_new`. An existing destination is accepted only after
+exact validation followed by file and directory fsync. All storage errors propagate;
+corrupt destinations are never replaced. A failed save can leave an orphan, and
+an exact retry can reconcile a complete singly linked object. A crash leaving a
+second temporary hardlink fails closed and requires separate reviewed cleanup.
+The directory and its ancestors must remain stable and inaccessible to candidates;
+these checks do not protect against their trusted owner concurrently modifying files.
+
+This API stores artifact bytes only. It neither writes SQLite references nor binds
+an attempt, verifier, task or result. A file or returned reference is not proof of
+execution or successful evaluation. Attempt-bound evidence, atomic ledger linkage,
+recovery and garbage collection remain later work. Tests cover exact retry, changed
+and missing bytes, unsafe file types, bounded reads and injected sync failures;
+they do not simulate physical power loss.

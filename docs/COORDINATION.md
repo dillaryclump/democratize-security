@@ -36,10 +36,9 @@ Use HANDOFF_TEMPLATE.md. Link the PR, exact tested commit/run, unavailable check
 
 ## Current integration hazard
 
-As of 2026-10-16 UTC, #17 and #31 are merged on main (`992b70e`), including
-collector and bounded-container-storage audit v5. Issue #32 integrates #22, #23,
-#25 and the #26 -> #28 -> #30 persistence stack on a separate branch. All source
-commits are retained; no source branch is rewritten. Shared status history is
-preserved while the current snapshot is reconciled against main. Do not merge
-older snapshots over the current runner capabilities. Source PRs remain open
-until combined review and merge succeed. Follow live issue/PR state thereafter.
+As of 2026-10-16 UTC, integration #33 merged at `d6c2657` with all eight CI
+jobs passing. It includes #22/#23/#25 and #26 -> #28 -> #30 alongside the merged
+collector #17 and storage #31. Source commits and branches are retained; stacked
+#28/#30 are closed with their integration disposition. Issue #34 owns the next
+artifact-object publication slice on `milestone/artifact-objects`. Follow live
+issue/PR state before editing overlapping persistence or status files.

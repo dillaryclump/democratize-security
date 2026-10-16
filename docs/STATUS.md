@@ -1,8 +1,8 @@
 # Current status and next handoff
 
-Snapshot: 2026-10-16 UTC. Integration branch `integration/persistence-runner`,
-based on main `992b70e` (merged collector #17 and container-storage #31).
-The additions below are integrated on this branch, not yet merged into main.
+Snapshot: 2026-10-16 UTC. Integration #33 is merged on main at `d6c2657`,
+including collector #17, container-storage #31 and the offline persistence stack.
+Branch `milestone/artifact-objects` adds the object-publication prerequisite (#34).
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before editing.
 See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
@@ -22,7 +22,7 @@ See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
   trials. See [APPLICATION_TASKS.md](APPLICATION_TASKS.md) and
   [HARBOR_AUDIT.md](HARBOR_AUDIT.md) for exact boundaries and remaining gaps.
 
-## Additions combined in this integration
+## Additions merged through #33
 
 | Source | Capability | Limits |
 | --- | --- | --- |
@@ -34,8 +34,8 @@ See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
 | #30, including `4097c252` | Store v2 synthetic attempt/reservation/settlement accounting, explicit migration and crash tests | No execution, successful evaluation, receipt authentication or live recovery |
 
 The source commits remain ancestors of this branch. Runner implementation and
-its tests from main are preserved without edits. Source PRs remain open until
-combined review/merge succeeds; their branches must not be deleted or reset.
+its tests from main are preserved without edits. Source PRs are merged or closed with their integration disposition; their branches
+are preserved. #28/#30 were closed after their commits reached main via #33.
 
 ## Evidence and validation
 
@@ -48,17 +48,24 @@ combined review/merge succeeds; their branches must not be deleted or reset.
 | Plan ledger #28 `59fb55f` | [CI 38769458396](https://github.com/dillaryclump/democratize-security/actions/runs/38769458396), all jobs passed |
 | Accounting #30 `4097c252` | [CI 38844962355](https://github.com/dillaryclump/democratize-security/actions/runs/38844962355), all jobs passed, including the three later regression tests |
 
-These are input-revision results. Combined local validation on Python 3.12:
+All eight combined CI jobs passed in [run 38847000439](https://github.com/dillaryclump/democratize-security/actions/runs/38847000439)
+at #33 head `4197e0d`, including PostgreSQL and all Harbor tasks.
+Combined integration local validation on Python 3.12:
 391 passed, 32 skipped (PostgreSQL and Docker prerequisites unavailable); Ruff
 check/format and package build passed. The skips are not passing integration
 evidence. Combined CI results are recorded in the integration PR/issue #32. Historical
 failures, fixes and source-branch handoffs remain in
 [STATUS_HISTORY.md](STATUS_HISTORY.md). Green CI does not imply owner acceptance.
 
+Artifact-object slice #34 local validation: 25 focused tests passed; complete
+suite 416 passed, 32 infrastructure skips. Ruff check/format and package build
+passed. Its separate PR records CI for that new revision.
+
 ## Next bounded work and gates
 
-1. Review combined integration and CI (#32). Resolve source PR dispositions only
-   after successful merge; keep M2 owner acceptance in #19 separate.
+1. Review artifact object publication (#34): bounded validated reads, raw/payload
+   identities, exact retry with sync reconciliation. This adds no ledger references
+   or accepted results. Keep M2 owner acceptance in #19 separate.
 2. Implement durable evidence references with exact artifact/verifier/attempt
    identity checks and missing/tampered-object rejection. Then implement the
    recovery reducer and controller-generation fencing using synthetic observations.
