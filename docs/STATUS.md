@@ -405,8 +405,14 @@ confirmed three defects, all fixed with tests that fail without the fix:
   log is still read in that window, and a lost race fails closed.
 
 The local runs above used the audit as it was before these fixes, which only
-tighten it; the shipped files set none of the refused options. CI on the final
-code is the evidence of record.
+tighten it; the shipped files set none of the refused options.
+
+CI [run 38843803069](https://github.com/dillaryclump/democratize-security/actions/runs/38843803069)
+at `5c49232`, the final code of this change, passed every job on the GitHub
+runner (uid 1001, cgroup v2). Each `harbor-apps` job ran all twelve trials,
+including the fill control, with twelve passing v5 audits. `harbor-spike` ran
+the policy replays and the tamper audit under v5. This run is the evidence of
+record.
 
 A volume declared as tmpfs but mounted with a `bind` flag, or from a host
 device, now also fails. The skeptic judged this out of scope, since only a

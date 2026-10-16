@@ -227,6 +227,11 @@ green, including one `harbor-apps` job per task (5 trials and 5 v3 audits each):
 Runs before `8c5a56e` used earlier drafts of v3. Run 38748449846 is the
 evidence of record for the final rules.
 
+With bounded container storage (audit v5, twelve trials per task including the
+fill control),
+[run 38843803069](https://github.com/dillaryclump/democratize-security/actions/runs/38843803069)
+at `5c49232` passed every job; STATUS.md has the local measurements.
+
 ## Limits
 
 - Public development tasks with a public verifier, not a protected holdout. A
