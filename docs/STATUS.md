@@ -64,6 +64,12 @@ M3 remains partial: no live recovery engine, production dispatcher, authenticate
 accepted-result registry, backup/restore tool, protected final evaluator, paid
 pilot, demonstrated benchmark improvement or GEPA search exists.
 
+Issue #50: PR #49's CI run 39043199834 failed one `harbor-apps` audit. In the
+`sparse` control, a collector exec carried an earlier timestamp than the agent's
+`die` event, which Docker emits after the exit that releases `docker stop`.
+Collector ordering now uses the agent's recorded exit time, with the `die` as
+fallback. A real stop failure still fails, now with the measured lead.
+
 M2 owner acceptance remains open in #19. Remaining observed runner gaps are
 `agent_can_write_verifier_log_directory`, `verifier_storage_unbounded` and
 `trial_storage_unbounded`. A dedicated host must bound each trial job directory;

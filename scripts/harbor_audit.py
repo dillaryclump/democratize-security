@@ -177,9 +177,9 @@ class Watcher:
     """Record container lifecycle events and inspect each container as it starts.
 
     Named volumes are inspected with the container that mounts them, while they
-    exist. When an agent's main container dies, the size of its log as the
-    daemon serves it is recorded. With a tamper `job`, also snapshot its forged
-    grades at that moment.
+    exist. When an agent's main container dies, it is inspected again for its
+    recorded exit time and the size of its log as the daemon serves it is
+    recorded. With a tamper `job`, also snapshot its forged grades at that moment.
     """
 
     def __init__(self, job=None):
@@ -219,7 +219,18 @@ class Watcher:
                 # The snapshot races the verifier's startup, so it goes first.
                 if self.job is not None:
                     self._snapshot()
+                self._record_exit(identity)
                 self._measure_log(identity, labels["com.docker.compose.project"])
+
+    def _record_exit(self, identity):
+        # Docker sets State.FinishedAt to the process's exit time before it
+        # emits the die event; the audit orders collector execs against it.
+        # Only State is taken; the configuration stays as inspected at start.
+        result = subprocess.run(
+            ["docker", "inspect", identity], capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and identity in self.inspections:
+            self.inspections[identity]["State"] = json.loads(result.stdout)[0].get("State")
 
     def _inspect_volumes(self, container):
         for mount in container.get("Mounts") or []:

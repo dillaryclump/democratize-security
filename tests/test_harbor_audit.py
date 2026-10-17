@@ -2,6 +2,7 @@
 
 import copy
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -944,3 +945,91 @@ def test_agent_volumes_are_admitted_only_where_reviewed(observed, mutation):
         next(m for m in agent["Mounts"] if m["Destination"] == "/solution")["RW"] = False
     record = run(trial, containers, events)
     assert outcomes(record)["mount_scope"] == "fail", record
+
+
+def stamp(nanos):
+    """Docker's State.FinishedAt format for a moment in nanoseconds since the epoch."""
+    seconds, fraction = divmod(nanos, 1_000_000_000)
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(seconds)) + f".{fraction:09d}Z"
+
+
+def collector_timeline(observed, *, finished, died, execs):
+    """One trial where the collector is exec'd at `execs` and the agent dies at `died`."""
+    trial, containers, _ = copy.deepcopy(observed)
+    agent_project = compose_project(f"{TRIAL}__env")
+    verifier_project = compose_project(f"{TRIAL}__verifier__trial")
+    events = [
+        event("start", "as", agent_project, SIDECAR, 0),
+        event("start", "agent", agent_project, "main", 10),
+        event("start", "collector", agent_project, "collector", 10),
+        event("die", "agent", agent_project, "main", died),
+        *(
+            event(
+                "exec_start: python3 -I /opt/collect.py", "collector", agent_project, "collector", t
+            )
+            for t in execs
+        ),
+        event("start", "vs", verifier_project, SIDECAR, 100),
+        event("start", "verifier", verifier_project, "main", 110),
+        event("die", "verifier", verifier_project, "main", 120),
+    ]
+    if finished is not None:
+        containers["agent"]["State"] = {"Status": "exited", "FinishedAt": finished}
+    return run(trial, containers, events)
+
+
+def test_collector_exec_between_exit_and_late_die_event_passes(observed):
+    # Docker releases `docker stop` at the exit and emits the die after writing
+    # state, so Harbor's collect hook can precede the die event itself.
+    record = collector_timeline(observed, finished=stamp(20), died=40, execs=[30, 35])
+    assert outcomes(record)["agent_stopped_before_verifier"] == "pass", record
+
+
+@pytest.mark.parametrize(
+    ("finished", "execs"),
+    [
+        # Without a recorded exit time the die event remains the bound.
+        (None, [30]),
+        # The agent was still running: Harbor's ignored stop failure looks so.
+        (stamp(35), [30]),
+        (stamp(20), [15, 30]),
+        (stamp(20), [20]),
+        # Exit times outside the agent's start and die are not trusted.
+        (stamp(50), [30]),
+        (stamp(5), [30]),
+        ("0001-01-01T00:00:00Z", [30]),
+        ("1970-01-01T00:00:00.000000020+00:00", [30]),
+    ],
+)
+def test_collector_exec_before_agent_exit_fails(observed, finished, execs):
+    record = collector_timeline(observed, finished=finished, died=40, execs=execs)
+    check = next(c for c in record["checks"] if c["id"] == "agent_stopped_before_verifier")
+    assert check["outcome"] == "fail", record
+    assert check["detail"].startswith("Collector was exec'd ") and "ms before" in check["detail"]
+
+
+def test_missing_collector_exec_is_named(observed):
+    record = collector_timeline(observed, finished=stamp(20), died=40, execs=[])
+    check = next(c for c in record["checks"] if c["id"] == "agent_stopped_before_verifier")
+    assert (check["outcome"], check["detail"]) == (
+        "fail",
+        "No exec into the collector was observed",
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2026-10-17T15:05:01.123456789Z", 1_792_249_501_123_456_789),
+        ("2026-10-17T15:05:01Z", 1_792_249_501_000_000_000),
+        ("2026-10-17T15:05:01.5Z", 1_792_249_501_500_000_000),
+        ("1970-01-01T00:00:00.000000002Z", 2),
+        ("0001-01-01T00:00:00Z", None),
+        ("2026-10-17T15:05:01.1234567890Z", None),
+        ("2026-10-17T15:05:01+00:00", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_docker_timestamps_parse_to_nanoseconds(value, expected):
+    assert harbor_audit._nanos(value) == expected
