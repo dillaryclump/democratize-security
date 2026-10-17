@@ -16,8 +16,24 @@ from democratize_security.verification.report import REQUIRED, Check, summarize
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def seed_intent(case, store):
+    return store.record_verification_intent(
+        "intent",
+        {
+            "attempt_id": "a1",
+            "expected_revision": 1,
+            "artifact_binding_sha256": case["binding"]["binding_sha256"],
+            "verification_request_id": "verify-1",
+        },
+    )
+
+
 @pytest.fixture
 def case(tmp_path):
+    return build_case(tmp_path)
+
+
+def build_case(tmp_path, *, with_intent=True):
     ledger, artifact_dir, evidence_dir, source = [
         tmp_path / name for name in ("ledger", "artifacts", "evidence", "source")
     ]
@@ -54,6 +70,7 @@ def case(tmp_path):
                 artifact_ref=artifact_ref,
             ),
         )
+        intent = seed_intent({"binding": binding}, store) if with_intent else None
     report = summarize([Check(name, "pass") for name in sorted(REQUIRED)])
     record = evidence.bind_report(binding, "verify-1", report)
     ref = evidence_objects.publish_evidence(evidence_dir, record, binding, "verify-1")
@@ -64,6 +81,8 @@ def case(tmp_path):
         verification_request_id="verify-1",
         evidence_ref=ref,
     )
+    if intent is not None:
+        request["verification_intent_sha256"] = intent["intent_sha256"]
     return dict(
         ledger=ledger,
         artifact_dir=artifact_dir,
@@ -291,6 +310,7 @@ def test_immutable_rows_and_rehashed_projection_mismatch(case):
 def make_v3(case):
     assert digest(V3_SCHEMA) == "b4ad26ef24500ea46a364e6890319a7524c21746088896ea5cca983ef95555ed"
     with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE verification_intents")
         db.execute("DROP TABLE evidence_bindings")
         db.execute("PRAGMA user_version=3")
         schema = dict(
@@ -308,7 +328,12 @@ def test_v3_migration_requires_opt_in_and_preserves_exact_records(case):
         open_store(case)
     with open_store(case, migrate=True) as store:
         assert store._db.execute("PRAGMA user_version").fetchone()[0] == VERSION
-        assert [line for line in store._db.iterdump() if "evidence_bindings" not in line] == before
+        assert [
+            line
+            for line in store._db.iterdump()
+            if "evidence_bindings" not in line and "verification_intents" not in line
+        ] == before
+        seed_intent(case, store)
         assert store.record_evidence("report", case["request"])
 
 
@@ -390,6 +415,7 @@ os._exit(72)
         assert len(store.evidence_bindings()) == (
             1 if operation == "bind" and phase == "after" else 0
         )
+        seed_intent(case, store)
         result = store.record_evidence("report", case["request"])
         assert store.evidence_bindings() == [result]
         assert store.attempts()[0]["revision"] == 1

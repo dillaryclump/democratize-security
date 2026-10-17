@@ -39,7 +39,7 @@ open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
 refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
-version 4; versions 2 and 3 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
+version 5; versions 2, 3 and 4 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
 Version 1 had only campaigns, immutable planned trials and import events at
 sequence zero. Version 2 adds the bounded accounting API below. It still has no
@@ -119,7 +119,7 @@ Upgrade an existing version 1 store with `PlanStore(directory, migrate=True)`.
 The exact old schema and all plans/import events are validated before migration.
 New tables/triggers and the version bump commit atomically; old rows are never
 rewritten. Normal opening refuses version 1 rather than implicitly modifying it.
-New stores now start at version 4. All old versions require explicit migration;
+New stores now start at version 5. All old versions require explicit migration;
 old accounting and, for v3, artifact bindings are validated before schema changes. Unknown versions or altered schemas are rejected.
 Take a verified backup before migrating valuable data; no backup tool ships here.
 
@@ -198,7 +198,9 @@ evidence_directory=evidence_directory)` for evidence linkage. Use existing durab
 controller-owned directories; no candidate may modify them. Artifacts and evidence
 may share a directory, but use distinct reference kinds and validation contracts.
 
-`record_evidence(event_id, request)` takes exactly these fields:
+Version 4 introduced the fields below. In version 5, new calls also require
+`verification_intent_sha256` from a previously committed verification intent.
+Historical records remain unchanged; see the v5 section below.
 
 | Field | Check |
 | --- | --- |
@@ -243,8 +245,55 @@ migration and evidence commits, stale/foreign/conflicting identities, tampering,
 immutable rows and preservation of accounting and reports. These tests do not
 prove power-loss durability, worker provenance or live recovery.
 
-Next: reviewed trusted runtime provenance and immutable verification intent,
-accepted-result lifecycle rules, recovery decisions and controller fencing.
+Version 5 adds immutable verification intent below. Next: trusted runtime
+provenance, accepted-result lifecycle rules, recovery decisions and controller fencing.
+
+## Durable verification intent (version 5, issue #44)
+
+`record_verification_intent(event_id, request)` commits a stable expected request
+identity before new evidence can enter the ledger. Its exact request fields are
+`attempt_id`, `expected_revision`, `artifact_binding_sha256` and
+`verification_request_id`. The attempt must still be preparing at the revision
+pinned by its immutable artifact binding. Artifact bytes are revalidated.
+
+The immutable envelope has schema version 1, kind `offline_verification_intent`,
+event ID, request and `intent_sha256`. SQL foreign keys bind each intent to its
+artifact event and accounting attempt/revision. Attempt, artifact event and
+verification request identities are unique. Exact retries return the same
+validated record, including after evidence admission or accounting settlement.
+Conflicting event/attempt/request identities persist a stop and preserve the
+original record. Existing integrity stops block new intents.
+
+New `record_evidence` calls require the additional `verification_intent_sha256`
+field. Their bindings use schema version 2, while report and evidence-file schemas
+remain unchanged. Before admitting evidence, the store loads the independently
+persisted intent and compares its digest and all four request fields. Read/reopen,
+budget and new-preparation checks validate intents as well as artifacts/evidence.
+No timestamps are used to infer ordering: the intent must already exist when the
+separate evidence transaction runs. The SQLite process lock serializes callers.
+
+Migration from v1-v4 is explicit and preserves old rows byte-for-byte. V4 evidence
+is validated before migration; missing/corrupt evidence blocks it. Historical
+schema-v1 evidence stays readable and exact retries remain no-ops, but no intent
+is fabricated. A new intent cannot reuse an already evidenced attempt or request,
+and readers reject a legacy evidence/intent collision. Fresh schema-v1 evidence
+cannot be inserted through the v5 API. Old v4 clients must add the intent call and
+hash field before writing new evidence.
+
+These are **offline expectations, not authenticated execution provenance**. A
+caller could already possess a report before committing intent; the store only
+proves ordering of its own admitted records. It does not launch a verifier, store
+credentials, acquire execution approval, prove worker termination, complete an
+attempt or release a reservation. Restarts retain intent but do not resend any
+request. Live provenance, controller generations, recovery decisions and accepted
+results remain separate work.
+
+Tests cover missing/mismatched/stale/retrospective intent, immutable rows,
+conflicting IDs, missing artifacts, projection tampering, v4 legacy preservation,
+SQL insert/commit and migration failures, and process death immediately before or
+after intent/migration commit. Existing v1-v3 migration and evidence durability
+regressions remain required. These tests prove process-crash behavior, not
+power-loss durability or real verifier authentication.
 
 ## Scope and invariants
 
@@ -269,7 +318,7 @@ CLI, automatic retry, scheduler service or new Harbor integration in that slice.
 
 ## Records and transaction boundaries
 
-Store schema version 4 is separate from the existing campaign version. The wider
+Store schema version 5 is separate from the existing campaign version. The wider
 record set below is the target contract, not the complete implemented schema.
 All write APIs reject unknown fields and incompatible versions. JSON is bounded,
 finite, canonical and rejects duplicate keys, using existing contract conventions.

@@ -2,7 +2,7 @@
 
 Issue #38 adds validation and canonical serialization for synthetic verifier
 reports. This is a prerequisite to result persistence, not an accepted-result
-registry or proof that a verifier executed. Store v4 now links these offline
+registry or proof that a verifier executed. Store v5 now links these offline
 observations as described in [PERSISTENCE.md](PERSISTENCE.md); it grants no
 accepted-result or execution authority.
 
@@ -75,5 +75,7 @@ These APIs perform no object publication, SQLite write, accounting transition,
 result acceptance, candidate promotion or execution. Incomplete/failed reports
 can be represented without turning them into success. Separate evidence-object
 publication (#40) and store v4 linkage (#42) add durable storage and revalidation.
-Runtime provenance, accepted-result semantics and recovery remain future work.
+V5 requires prior verification intent for new evidence bindings; historical
+evidence retains its original schema and cannot acquire retrospective intent.
+Runtime authentication, accepted-result semantics and recovery remain future work.
 Persisted observations remain offline synthetic records only.

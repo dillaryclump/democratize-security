@@ -40,11 +40,12 @@ Every PR states: problem; change; requirement covered; tests actually run and th
 
 Read docs/REFERENCE.md for the implemented synthetic reference and public verifier (protocol v3). Read docs/ARTIFACTS.md for the M2 artifact prerequisite and read docs/WORKER_PROBE.md for the implemented offline host probe. Read docs/HARBOR.md for the pinned, model-free separate-verifier policy spike. Read docs/SEALED_REPLAY.md for sealed replay and docs/HARBOR_AUDIT.md for the hardened container layout, nonce-bound verifier evidence and the v5 boundary audit. Read docs/APPLICATION_TASKS.md for the three implemented application tasks (read, list/search, CSV export), their isolated candidate container, reviewed controls and replays. Every Harbor task collects its submission artifact through the trusted collector described in docs/HARBOR_AUDIT.md and excludes Harbor's re-upload of the agent-written `/logs/artifacts` directory while the agent's container accepts execs; host acceptance rejects any trial where an agent forced Harbor's unfiltered fallback (ARCHITECTURE.md runtime step 5), all proven for the application tasks by hostile extraction controls; the policy task shares the byte-identical collector, configuration, acceptance and unit tests. Container storage (submission volumes, `/tmp`, `/dev/shm`, container logs) is size-bounded and audited, proven by the storage control. Keep all of these as regressions. Next: a dedicated worker host that mounts each trial's job directory on its own bounded filesystem (the audit reports `trial_storage_unbounded` until then; it needs host privilege, which the repository scripts deliberately do not use), owner review of the M2 evidence and of the M0 contract defaults, then a dedicated worker host and an approved finite model budget before any agent execution. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.
 
-Read docs/PERSISTENCE.md before changing store.py. Store v4 adds immutable
-offline evidence references (#42) on top of attempt-bound artifacts (#36).
+Read docs/PERSISTENCE.md before changing store.py. Store v5 requires durable verification intent (#44) before new offline evidence
+references (#42), on top of attempt-bound artifacts (#36).
 Artifact object publication #35 is merged. Bindings pin synthetic verifier intent;
 they are not accepted results or execution provenance. Evidence reads revalidate
 both artifact and report files; even passing reports do not complete attempts.
-Next: trusted runtime provenance/verification intent, accepted-result semantics,
+Historical evidence stays explicitly without intent. Next: trusted runtime
+authentication, accepted-result semantics,
 then recovery rules and controller fencing. Do not treat a saved plan, binding or
 cost reservation as authorization to execute a trial.
