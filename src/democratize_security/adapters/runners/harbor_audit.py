@@ -24,6 +24,7 @@ unless its job directory is its own filesystem of at most
 needs host privilege to close.
 """
 
+import calendar
 import json
 import os
 import re
@@ -150,6 +151,20 @@ def _bytes(value) -> int | None:
     if not match or int(match.group(1)) <= 0:
         return None
     return int(match.group(1)) * 1024 ** " kmg".index(match.group(2) or " ")
+
+
+def _nanos(stamp) -> int | None:
+    """Docker's UTC RFC 3339 time (`State.FinishedAt`) in nanoseconds; None if unset."""
+    match = re.fullmatch(
+        r"(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,9}))?Z", str(stamp or "")
+    )
+    if not match:
+        return None
+    seconds = calendar.timegm(tuple(int(part) for part in match.groups()[:6]))
+    # Docker reports a container that never stopped as 0001-01-01T00:00:00Z.
+    if seconds < 0:
+        return None
+    return seconds * 1_000_000_000 + int((match.group(7) or "").ljust(9, "0"))
 
 
 def _tmpfs_size(options: str) -> int | None:
@@ -378,11 +393,20 @@ def audit(
             for container in by_project[verifier_project]
             for moment in moments(container, "start")
         ]
+        agent_started = max(moments(agent, "start"))
         agent_stopped = max(moments(agent, "die"))
-        if not (max(moments(agent, "start")) < agent_stopped < min(verifier_starts)):
+        if not (agent_started < agent_stopped < min(verifier_starts)):
             raise AssertionError("Agent container was running when verification started")
         # Extraction happens only after the worker stopped: every exec into the
-        # collector (the collect hook, Harbor's file probes) follows the die.
+        # collector (the collect hook, Harbor's file probes) follows its exit.
+        # Docker records the exit time (`State.FinishedAt`, re-inspected at the
+        # die) before it releases `docker stop`, but emits the die event only
+        # after writing the container's state, so Harbor's next exec can carry
+        # an earlier timestamp than the die. Without a consistent exit time the
+        # later die is the bound.
+        exited = _nanos((agent.get("State") or {}).get("FinishedAt"))
+        if exited is None or not agent_started < exited <= agent_stopped:
+            exited = agent_stopped
         for container in collectors():
             execs = [
                 int(e["timeNano"])
@@ -390,8 +414,13 @@ def audit(
                 if str(e.get("Action", "")).startswith("exec_start")
                 and e.get("Actor", {}).get("ID") == container["Id"]
             ]
-            if not execs or min(execs) <= agent_stopped:
-                raise AssertionError("Collector did not extract only after the agent stopped")
+            if not execs:
+                raise AssertionError("No exec into the collector was observed")
+            if min(execs) <= exited:
+                lead = (exited - min(execs)) / 1_000_000
+                raise AssertionError(
+                    f"Collector was exec'd {lead:.0f} ms before the agent's container stopped"
+                )
 
     def privilege():
         for project in by_project:

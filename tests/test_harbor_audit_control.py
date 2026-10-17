@@ -1,5 +1,6 @@
 """Offline checks for the reviewed tamper control; live Docker runs only in CI."""
 
+import copy
 import json
 import os
 import runpy
@@ -170,3 +171,33 @@ def test_watcher_inspects_each_named_volume_once(control, tmp_path, monkeypatch)
         }
     }
     assert calls.read_text() == "volume inspect trial__env_candidate\n"
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_watcher_records_only_the_exit_state_at_die(control, tmp_path, monkeypatch, known):
+    fake_docker(
+        tmp_path,
+        monkeypatch,
+        """printf '[{"State": {"Status": "exited", "FinishedAt": "2026-10-17T15:05:01.5Z"},'
+printf ' "HostConfig": {"Privileged": true}}]'""",
+    )
+    watcher = bare_watcher(control)
+    started = {"Id": "agent", "HostConfig": {"Privileged": False}, "State": {"Running": True}}
+    watcher.inspections = {"agent": copy.deepcopy(started)} if known else {}
+    watcher._record_exit("agent")
+    if known:
+        # The configuration stays as inspected at start; only State is replaced.
+        assert watcher.inspections["agent"] == {
+            **started,
+            "State": {"Status": "exited", "FinishedAt": "2026-10-17T15:05:01.5Z"},
+        }
+    else:
+        assert watcher.inspections == {}
+
+
+def test_watcher_keeps_start_state_when_reinspection_fails(control, tmp_path, monkeypatch):
+    fake_docker(tmp_path, monkeypatch, "echo 'No such container' >&2; exit 1")
+    watcher = bare_watcher(control)
+    watcher.inspections = {"agent": {"Id": "agent", "State": {"Running": True}}}
+    watcher._record_exit("agent")
+    assert watcher.inspections["agent"]["State"] == {"Running": True}

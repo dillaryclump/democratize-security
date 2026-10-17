@@ -33,7 +33,8 @@ random TCP port on all host interfaces to count connections. The CI
 All gating inputs come from the controller, never from the candidate:
 
 - `docker events` for container start, die and exec, with each container inspected as it
-  starts, and each named volume it mounts inspected while it exists.
+  starts, and each named volume it mounts inspected while it exists. The
+  agent's main container is inspected again at its `die`, for its exit time.
   `adapters/runners/harbor_audit.py` (stdlib only, no Harbor import)
   evaluates them; the core package does not import runner adapters.
 - The trial directory's filesystem (`statvfs`), and whether its job directory
@@ -64,7 +65,7 @@ Acceptance requires all of:
 | Check | Requirement |
 | --- | --- |
 | `separate_environments` | One agent and one verifier `main` in their own compose projects, only Harbor's egress sidecar besides plus at most one `collector` in the agent project and one `app` in the verifier project; agent, verifier, app and collector images all differ; neither app nor collector shares a PID, IPC or UTS namespace; every started trial container was inspected |
-| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts; v4: at least one exec into the collector, and every one after that `die`, so extraction happened only after the worker stopped |
+| `agent_stopped_before_verifier` | Every agent start, including restarts, ends in a `die` before any verifier-project container (main, app or sidecar) first starts; v4: at least one exec into the collector, and every one after the agent stopped, so extraction happened only after the worker stopped. The bound is the agent's recorded exit time (`State.FinishedAt`, re-inspected at its `die`), when that lies between its last start and its `die`; otherwise the `die` itself. Docker records the exit before it releases `docker stop`, but emits `die` only after writing the container's state, so on a busy host Harbor's next exec can carry an earlier timestamp than the `die`. A failure states by how many milliseconds the exec preceded the bound |
 | `no_privilege` | Not privileged; sidecars add at most `NET_ADMIN`/`NET_RAW`; no host PID/IPC/UTS/user namespace, devices or unconfined profiles |
 | `mount_scope` | Only Harbor's log binds, inside the trial directory (no Docker socket, checkout or tests); only image-declared anonymous volumes; tmpfs only at `/tmp` on main containers, with `noexec` as the last exec flag. v3: the app mounts nothing but the local `<verifier project>_candidate` volume at `/candidate`, read-only, which the verifier main mounts read-write, and its only tmpfs is a `noexec` `/tmp`; v4: with a collector present, the agent main mounts the local `<agent project>_candidate` volume read-write at `/candidate` and the collector mounts it read-only at `/agent-candidate`, plus its own output volume, nothing else and no tmpfs; v5: the agent main may also mount `<agent project>_solution` read-write at `/solution`, and the collector's output is `<agent project>_collected` at `/candidate`; no other named volume anywhere |
 | `declared_limits` | Memory and CPU equal `task.toml`; the app's and collector's equal their compose declarations (a missing declaration is incomplete) |
