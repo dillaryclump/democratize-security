@@ -2,7 +2,11 @@
 
 Status: proposed design for M3, issue #21; **offline plan import and synthetic
 attempt/budget accounting are merged via #33**, as described below.
-The external recovery engine remains unimplemented. Integration #33 merged at
+The external recovery engine remains unimplemented. Issue #48 adds a standalone
+pure policy for synthetic recovery observations; see [RECOVERY.md](RECOVERY.md).
+It returns inspection advice without changing store state or enabling execution.
+Durable controller generations and runtime integration remain separate work.
+Integration #33 merged at
 `d6c2657`; implementation originates in #26/#28/#30. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
 This contract does not approve model execution or change campaign schema v1,
 artifact schema v1, verifier protocol v3, or existing scores. M0/M2 owner

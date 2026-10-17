@@ -3,6 +3,9 @@
 Updated: 2026-10-17 UTC. Report contracts #39, durable evidence objects #41,
 offline evidence ledger #43 and verification intent #45 are merged into main
 through `c5a177c`, with successful CI on all four reviewed source heads.
+Handoff #47 merged at `99a62f7` with CI run 39039851019 passing. Issue #48
+adds the pure recovery policy on `milestone/recovery-decisions`; consult its PR
+for merge and CI status.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before claiming
 work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
@@ -27,6 +30,10 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
 - Store v5 commits verification intent before admitting new schema-v2
   evidence bindings. Historical evidence remains unchanged and cannot acquire
   retrospective intent. This records expectations, not verifier authentication.
+- On #48: a pure recovery decision function covers synthetic crash observations,
+  rejects stale/foreign context and preserves uncertain cost holds. It emits
+  inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
+  durable controller fencing is implemented by this slice.
 
 ## Integration and evidence
 
@@ -47,9 +54,10 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 ## Next bounded work
 
-1. Implement a pure recovery reducer and controller-generation fencing using
-   synthetic observations. Cover the crash-window table in [PERSISTENCE.md](PERSISTENCE.md):
-   ambiguous request outcomes must retain reservations and never emit resubmission.
+1. Review/integrate #48, then implement durable controller-generation ownership
+   and fencing under the process lock, including crash/reopen and stale-write tests.
+   Connect validated store projections to recovery decisions in a separate slice.
+   Ambiguous request outcomes must retain holds and never emit resubmission.
 2. Define and implement the trusted runtime authentication boundary and
    accepted-result lifecycle. Persisted intent, hashes and report consistency
    alone cannot prove a trusted verifier executed. Do not manufacture accepted

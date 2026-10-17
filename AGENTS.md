@@ -45,7 +45,10 @@ references (#42), on top of attempt-bound artifacts (#36).
 Artifact object publication #35 is merged. Bindings pin synthetic verifier intent;
 they are not accepted results or execution provenance. Evidence reads revalidate
 both artifact and report files; even passing reports do not complete attempts.
-Historical evidence stays explicitly without intent. Next: trusted runtime
-authentication, accepted-result semantics,
-then recovery rules and controller fencing. Do not treat a saved plan, binding or
+Historical evidence stays explicitly without intent. Read docs/RECOVERY.md for
+the standalone synthetic recovery policy (#48). It emits inspection advice only;
+no persistent controller fencing or runtime transitions exist. Next: durable
+controller generations and stale-write fencing, then trusted runtime
+authentication and accepted-result semantics before runtime recovery integration.
+Do not treat a saved plan, binding or
 cost reservation as authorization to execute a trial.
