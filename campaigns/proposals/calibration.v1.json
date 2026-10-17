@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "status": "unapproved_proposal",
+  "execution_enabled": false,
+  "name": "six-public-development-model-calibration",
+  "scope": "One attempt per existing public invoice read/search/export task with each of two fixed models. Engineering and model calibration only; no four-condition efficacy comparison.",
+  "pricing_snapshot_sha256": "6c824fac5651b9cf001a0694d999a54be2115db02bfd2cde098421d86336b3da",
+  "concurrency": 1,
+  "max_cost_usd_cents": 1000,
+  "limits": {
+    "max_requests": 12,
+    "max_input_tokens_per_request": 64000,
+    "max_output_tokens_per_request": 25000,
+    "max_total_input_tokens": 500000,
+    "max_total_output_tokens": 100000,
+    "agent_timeout_seconds": 900,
+    "verifier_timeout_seconds": 300,
+    "infrastructure_retries": 0,
+    "repair_attempts": 0
+  },
+  "groups": [
+    {
+      "label": "sol-medium",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium",
+      "task_labels": ["invoice-read", "invoice-search", "invoice-export"]
+    },
+    {
+      "label": "luna-medium",
+      "provider": "openai",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "task_labels": ["invoice-read", "invoice-search", "invoice-export"]
+    }
+  ],
+  "usage_scenarios": [
+    {"label": "light-assumption", "input_tokens": 50000, "output_tokens": 10000},
+    {"label": "working-assumption", "input_tokens": 150000, "output_tokens": 30000}
+  ],
+  "unresolved_requirements": [
+    "Owner approval of this finite model batch and its model-token and infrastructure caps.",
+    "Frozen exact source, task-manifest, image, prompt and scorer identities; task_labels are names, not resolved manifests.",
+    "Accepted dedicated worker evidence, durable controller fencing/recovery, trusted verifier-result admission and verified backup/restore.",
+    "Trusted host model transport with full-payload exact input preflight, durable per-request reservations, sanitized raw usage and ambiguous-request holds.",
+    "Reviewed terminal-enabled agent image and model-free adapter conformance tests; no runtime installation or candidate network expansion.",
+    "Current provider account access, standard tier and prices rechecked immediately before a separately authorized run."
+  ]
+}
