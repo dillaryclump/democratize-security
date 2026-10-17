@@ -36,12 +36,10 @@ Use HANDOFF_TEMPLATE.md. Link the PR, exact tested commit/run, unavailable check
 
 ## Current integration hazard
 
-As of 2026-10-16 UTC, integration #33 merged at `d6c2657` with all eight CI
-jobs passing. It includes #22/#23/#25 and #26 -> #28 -> #30 alongside the merged
-collector #17 and storage #31. Source commits and branches are retained; stacked
-#28/#30 are closed with their integration disposition. Artifact object publication #35 is also merged at `dd7fe70` after all eight CI
-jobs passed. Artifact bindings #37 also merged at `0791d47` after all eight jobs
-passed. Issue #38 owns the offline verifier-evidence contract on
-`milestone/verifier-evidence-contract`, based on that merged main. Runtime verifier
-copies remain unchanged. Follow live issue/PR state before editing overlapping
-persistence or status files.
+As of 2026-10-17 UTC, #39/#41/#43/#45 are merged on main through `c5a177c`,
+with successful CI on each reviewed source head. Source commits and branches
+remain intact. No implementation slice in this evidence stack remains unmerged.
+Issue #46 owns documentation reconciliation on `milestone/evidence-integration`.
+See STATUS.md for live capability, evidence and remaining gates. Check live
+issue/PR state before modifying overlapping store or status files. M2 owner
+acceptance stays in #19 and is not implied by implementation merges.

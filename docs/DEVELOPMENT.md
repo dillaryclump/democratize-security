@@ -52,7 +52,7 @@ Repository configuration files cannot enable these settings by themselves. The f
 
 ## Next agent assignment
 
-Read AGENTS.md, STATUS.md and COORDINATION.md, then inspect live issues and open PRs. Select an unclaimed bounded task and record ownership before editing. The original M1 reference assignment is implemented; do not restart it. Collector #17 and storage #31 are merged; M2 owner acceptance remains in #19. Issue #32 combines the pending regression, artifact-durability, coordination and offline persistence stack. Review that integration before starting durable evidence and recovery work.
+Read AGENTS.md, STATUS.md and COORDINATION.md, then inspect live issues and open PRs. Select an unclaimed bounded task and record ownership before editing. The original M1 reference assignment is implemented; do not restart it. Collector #17 and storage #31 are merged; M2 owner acceptance remains in #19. Integration #33 and evidence #39/#41/#43/#45 are merged. Follow STATUS.md for recovery and runtime-authentication work; #46 records the evidence-stack integration handoff.
 
 ## Reference integration gate
 
