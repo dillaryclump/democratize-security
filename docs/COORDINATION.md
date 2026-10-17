@@ -39,7 +39,9 @@ Use HANDOFF_TEMPLATE.md. Link the PR, exact tested commit/run, unavailable check
 As of 2026-10-17 UTC, #39/#41/#43/#45 are merged on main through `c5a177c`,
 with successful CI on each reviewed source head. Source commits and branches
 remain intact. No implementation slice in this evidence stack remains unmerged.
-Issue #46 owns documentation reconciliation on `milestone/evidence-integration`.
+Documentation reconciliation #47 merged at `99a62f7`, closing #46.
+Issue #48 owns the pure recovery policy on `milestone/recovery-decisions`;
+it does not modify the store schema or implement durable controller fencing.
 See STATUS.md for live capability, evidence and remaining gates. Check live
 issue/PR state before modifying overlapping store or status files. M2 owner
 acceptance stays in #19 and is not implied by implementation merges.
