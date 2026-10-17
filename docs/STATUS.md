@@ -68,7 +68,10 @@ Issue #50: PR #49's CI run 39043199834 failed one `harbor-apps` audit. In the
 `sparse` control, a collector exec carried an earlier timestamp than the agent's
 `die` event, which Docker emits after the exit that releases `docker stop`.
 Collector ordering now uses the agent's recorded exit time, with the `die` as
-fallback. A real stop failure still fails, now with the measured lead.
+fallback. A real stop failure still fails, now with the measured lead. Locally
+(Docker 29.8.2, cgroup v1, root; proxy-CA patched images), `invoice-read` passed
+all 12 trials and 12/12 audits. In every trial `die` trailed the recorded exit by
+48–87 ms, and the first collector exec came 108–840 ms after `die`.
 
 M2 owner acceptance remains open in #19. Remaining observed runner gaps are
 `agent_can_write_verifier_log_directory`, `verifier_storage_unbounded` and
