@@ -3,8 +3,9 @@
 Snapshot: 2026-10-16 UTC. Integration #33 is merged on main at `d6c2657`,
 including collector #17, container-storage #31 and the offline persistence stack.
 Artifact object publication #35 is merged at `dd7fe70`. Branch
-`milestone/artifact-bindings` adds immutable artifact references (#36), not yet
-merged into main.
+Immutable artifact references #37 are merged at `0791d47`.
+Branch `milestone/verifier-evidence-contract` adds report validation and canonical
+evidence envelopes (#38); this new contract is not yet merged.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before editing.
 See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
@@ -67,17 +68,22 @@ at #35 head `3bbfb82`; #35 is merged.
 Artifact-binding slice #36 local validation: 25 new focused tests passed,
 including binding/migration process crashes and SQL/sync failures. Full suite:
 441 passed, 32 infrastructure skips; Ruff check/format and package build passed.
-Its separate PR records CI for this new revision.
+All eight jobs passed in [CI 38915505866](https://github.com/dillaryclump/democratize-security/actions/runs/38915505866)
+at #37 head `5b31696`; #37 is merged.
+
+Evidence contract #38 local validation: 39 focused tests, including parity for
+all 6,561 check-outcome combinations; full suite 480 passed, 32 infrastructure
+skips. Ruff check/format and build passed; core imports also passed without site
+packages. Its separate PR records CI for the new revision.
 
 ## Next bounded work and gates
 
-1. Review immutable artifact binding (#36): explicit store v3 migration, exact
-   attempt/task identity, pinned synthetic verifier intent and object revalidation
-   at reopen/read/new preparation. This adds no accepted result or execution.
-   Keep M2 owner acceptance in #19 separate.
-2. Implement verifier-result evidence with complete check accounting and trusted
-   runtime provenance. Then implement the
-   recovery reducer and controller-generation fencing using synthetic observations.
+1. Keep M2 owner acceptance in #19 separate from the merged implementation.
+2. Review the offline [evidence contract](EVIDENCE.md) (#38): strict report/check
+   accounting, unchanged v3 scoring, and binding/request identity checks. No result
+   persistence or authentication is added. Then implement durable result objects
+   and ledger linkage, trusted runtime provenance, and the recovery reducer with
+   controller-generation fencing using synthetic observations.
 3. Before runner integration, review the persistence contract and prove the above
    crash windows. Before model execution, obtain M0/M2 owner acceptance, a
    dedicated bounded worker environment and an explicitly approved finite budget.

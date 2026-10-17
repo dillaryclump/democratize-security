@@ -40,6 +40,8 @@ As of 2026-10-16 UTC, integration #33 merged at `d6c2657` with all eight CI
 jobs passing. It includes #22/#23/#25 and #26 -> #28 -> #30 alongside the merged
 collector #17 and storage #31. Source commits and branches are retained; stacked
 #28/#30 are closed with their integration disposition. Artifact object publication #35 is also merged at `dd7fe70` after all eight CI
-jobs passed. Issue #36 owns immutable artifact bindings on
-`milestone/artifact-bindings`. Follow live
-issue/PR state before editing overlapping persistence or status files.
+jobs passed. Artifact bindings #37 also merged at `0791d47` after all eight jobs
+passed. Issue #38 owns the offline verifier-evidence contract on
+`milestone/verifier-evidence-contract`, based on that merged main. Runtime verifier
+copies remain unchanged. Follow live issue/PR state before editing overlapping
+persistence or status files.

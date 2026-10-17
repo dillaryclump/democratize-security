@@ -183,7 +183,9 @@ not power-loss proof.
 
 The caller supplies trusted **synthetic intent**. Pinning a verifier hash is not
 proof it executed or authenticated a result; no verifier result is stored here.
-Completed states, result/check coverage validation, runtime request provenance,
+The [offline evidence contract](EVIDENCE.md) now validates report/check coverage
+and binds expected identities before serialization; it adds no database writes.
+Completed states, durable result storage, runtime request provenance,
 controller generations and recovery remain subsequent work. A binding cannot
 promote a candidate, release its reservation or authorize execution.
 
