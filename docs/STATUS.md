@@ -12,6 +12,8 @@ trusted runtime provenance is added by #40.
 Stacked branch `milestone/evidence-ledger` adds explicit store v4 migration and
 immutable offline evidence linkage (#42), not yet merged. Runtime provenance
 and accepted/completed-result semantics remain unimplemented.
+Branch `milestone/verification-intent` adds store v5 durable intent before new
+evidence admission (#44), stacked on #43 and not yet merged.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before editing.
 See [COORDINATION.md](COORDINATION.md) for claims and handoffs.
@@ -89,8 +91,8 @@ at #39 head `bc58fd2`; #39 remains in review.
 2. Review the offline [evidence contract](EVIDENCE.md) (#38): strict report/check
    accounting, unchanged v3 scoring, and binding/request identity checks. No result
    authentication is added. Review stacked offline object storage (#41) and
-   ledger linkage (#42), then implement trusted runtime provenance/verification
-   intent, accepted-result lifecycle rules and the recovery reducer with
+   ledger linkage (#42) and prior verification intent (#44), then implement trusted
+   runtime authentication, accepted-result lifecycle rules and the recovery reducer with
    controller-generation fencing using synthetic observations.
 3. Before runner integration, review the persistence contract and prove the above
    crash windows. Before model execution, obtain M0/M2 owner acceptance, a
@@ -160,3 +162,21 @@ Local validation for #42: 39 focused tests passed; full locked suite 521 passed,
 54 skipped (optional dependencies/PostgreSQL/Docker unavailable). Locked sync,
 Ruff check/format, package build and whitespace checks passed. CI must verify
 this new revision; the prerequisite CI above is not evidence for #42.
+
+## Verification intent handoff (#44, 2026-10-17 UTC)
+
+Store v5 requires immutable expected request/attempt/artifact identity before
+admitting new evidence bindings (schema v2). Stable exact retries remain no-ops;
+conflicts persist a stop. Old v4 evidence remains readable, unchanged and without
+intent; retrospective intent is rejected. Migration is explicit from v1-v4.
+No execution, authentication, accepted-result or accounting transition is added.
+
+Prerequisite #43 CI passed at `8cda0d3` in
+[run 38955296644](https://github.com/dillaryclump/democratize-security/actions/runs/38955296644).
+This is not CI evidence for #44. Next: review the stacked persistence changes,
+then trusted runtime authentication, recovery/controller fencing and accepted-result
+semantics. Existing M0/M2 and dedicated-worker/budget gates still apply.
+
+#44 local validation: 29 new intent tests pass; full suite 550 passed and
+54 skipped (optional dependencies/PostgreSQL/Docker unavailable). Locked sync,
+Ruff check/format and package build passed. New CI is required for this revision.
