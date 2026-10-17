@@ -2,7 +2,7 @@
 
 Build affordable, inspectable security integration for AI-assisted software development, with reproducible evidence of what it protects.
 
-**Status: development reference and offline research foundation.** Implemented: campaign planning, a synthetic FastAPI invoice app, PostgreSQL RLS integration tests and a public HTTP/database verifier. These are development fixtures, not production authentication or a protected research worker. No benchmark improvement or universal security guarantee is claimed.
+**Status: development reference and offline research foundation.** Implemented: offline campaign planning and persistence, durable artifact/evidence storage, a synthetic FastAPI invoice app, PostgreSQL RLS integration tests and a public HTTP/database verifier. These are development fixtures, not production authentication or a protected research worker. No benchmark improvement or universal security guarantee is claimed.
 
 ## Start here
 
@@ -46,7 +46,7 @@ The broader ambition is a reusable security layer across coding agents, framewor
 
 | Path | Purpose |
 | --- | --- |
-| `src/democratize_security/` | Implemented, dependency-free campaign contracts and CLI |
+| `src/democratize_security/` | Offline contracts, CLI, persistence/evidence and public reference/verifier |
 | `tests/` | Foundation unit and CLI tests, not tenant-isolation proof |
 | `campaigns/` | Public, synthetic offline examples |
 | `candidates/` | Planned product integration boundary |
