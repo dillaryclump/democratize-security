@@ -19,12 +19,22 @@ publication stage and already committed accounting. `actual_cost_cents=None`
 means unknown. A known cost, including zero, is permitted only on a terminal
 attempt and means settlement already committed. Recovery never creates settlement.
 Amounts are nonnegative integer cents; booleans and floats are rejected.
+Records must be consistent with the contract's phase prerequisites:
+- `running`, `sealed`, `verifying` and `completed` need the acknowledged worker's
+  identity, since that acknowledgement binds the worker before `running`;
+- a committed artifact reference needs `sealed` or later, and a verification
+  intent needs `verifying` or later;
+- `preparing` and `interrupted` may still hold the offline bindings store v5
+  allows.
+
+A `reconciling` record is checked against the phase it came from.
 
 `RecoveryObservation` describes a fresh inspection of those same identities.
 Trial, attempt, controller generation, revision and both request IDs must match
 exactly, including absence. An observed worker cannot conflict with a recorded
 worker. Before acknowledgement, a fresh inspection may identify the worker for
 the recorded request, but this function does not persist that acknowledgement.
+An observed active or stopped worker must always be named.
 On mismatch, `RecoveryError` rejects the observation; callers must keep dispatch
 blocked. Optional worker absence does not establish worker termination.
 
@@ -44,7 +54,8 @@ even when all supplied assertions look favorable.
 
 All actions below are inspection advice, not commands to execute. Integrity
 failure, missing referenced bytes, a partial/missing completed result, an active
-worker conflicting with terminal state or a recorded cost overrun takes precedence
+worker conflicting with sealed, verifying or terminal state (each of which
+records the worker's observed stop) or a recorded cost overrun takes precedence
 and produces `integrity_stop`. Every decision preserves accounting exactly.
 
 | Durable crash boundary | Advice and limits |
@@ -71,7 +82,9 @@ work. This module does not prove recovery of a live provider or power-loss safet
 ## Validation and next integration
 
 `tests/test_recovery.py` exercises the crash windows, malformed states, identity
-mismatches, contradictory terminal observations and replay. A cross-product test
+mismatches, contradictory sealed and terminal observations and replay. Each
+validation rule and contradiction has a case that fails when that rule is
+removed. A cross-product test
 varies worker status, deadline expiry, artifact validity and evidence coverage,
 checking that no combination releases an unknown-cost hold or enables dispatch.
 

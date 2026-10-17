@@ -109,10 +109,20 @@ class RecoveryState:
         if phase in {"dispatch_pending", "running", "sealed", "verifying", "completed"}:
             if self.runner_request_id is None:
                 raise RecoveryError("phase requires runner request identity")
+        # A trusted acknowledgement binds the worker before running; without it,
+        # any worker reported for the request would be accepted as this one.
+        if phase in {"running", "sealed", "verifying", "completed"} and self.worker_id is None:
+            raise RecoveryError("acknowledged phase requires worker identity")
         if self.worker_id is not None and self.runner_request_id is None:
             raise RecoveryError("worker requires runner request identity")
         if phase in {"sealed", "verifying", "completed"} and self.artifact_stage != "referenced":
             raise RecoveryError("phase requires referenced artifact")
+        # The reference commits with running -> sealed and intent with
+        # sealed -> verifying; earlier runtime phases cannot hold them.
+        if phase in {"dispatch_pending", "running"} and self.artifact_stage == "referenced":
+            raise RecoveryError("artifact reference requires sealed or later phase")
+        if phase == "sealed" and self.verification_request_id is not None:
+            raise RecoveryError("verification intent requires verifying or later phase")
         if phase in {"verifying", "completed"} and self.verification_request_id is None:
             raise RecoveryError("phase requires verification intent")
         if self.verification_request_id is not None and self.artifact_stage != "referenced":
@@ -223,12 +233,16 @@ def recovery_decision(state: RecoveryState, observation: RecoveryObservation) ->
         return advise("integrity_stop", "committed_evidence_missing")
     if state.phase == "completed" and observation.evidence_status == "partial":
         return advise("integrity_stop", "committed_result_incomplete")
-    if state.phase in {"completed", "interrupted"} and observation.runner_status == "active":
+    phase = state.previous_phase if state.phase == "reconciling" else state.phase
+    if phase in {"completed", "interrupted"} and observation.runner_status == "active":
         return advise("integrity_stop", "terminal_worker_active")
+    # Sealing required an observed stop of this worker, so activity now
+    # contradicts the committed record rather than being a routine observation.
+    if phase in {"sealed", "verifying"} and observation.runner_status == "active":
+        return advise("integrity_stop", "sealed_worker_active")
     if state.actual_cost_cents is not None and state.actual_cost_cents > state.max_cost_cents:
         return advise("integrity_stop", "cost_overrun")
 
-    phase = state.previous_phase if state.phase == "reconciling" else state.phase
     if phase == "planned":
         return advise("inspect_plan", "no_committed_attempt")
     if phase in {"completed", "interrupted"}:

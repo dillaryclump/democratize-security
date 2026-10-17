@@ -13,7 +13,8 @@ from democratize_security.recovery import (
 )
 
 
-def state(phase="preparing", **changes):
+def state(phase="preparing", *, reconciling=False, **changes):
+    """A valid record for `phase`; with `reconciling`, the same record mid-reconciliation."""
     fields = dict(
         trial_id="trial",
         attempt_id="attempt",
@@ -26,10 +27,14 @@ def state(phase="preparing", **changes):
         fields.update(attempt_id=None, revision=0, max_cost_cents=0)
     if phase in {"dispatch_pending", "running", "sealed", "verifying", "completed"}:
         fields.update(runner_request_id="runner-request")
+    if phase in {"running", "sealed", "verifying", "completed"}:
+        fields.update(worker_id="worker")
     if phase in {"sealed", "verifying", "completed"}:
         fields.update(artifact_stage="referenced")
     if phase in {"verifying", "completed"}:
         fields.update(verification_request_id="verifier-request")
+    if reconciling:
+        fields.update(phase="reconciling", previous_phase=phase)
     fields.update(changes)
     return RecoveryState(**fields)
 
@@ -139,6 +144,26 @@ def observed(saved, **changes):
             "review_committed_result",
             300,
         ),
+        # Referenced bytes are revalidated before committed-result or terminal review.
+        (state("completed"), {}, "revalidate_artifact", 300),
+        (state("completed"), {"evidence_status": "complete"}, "revalidate_artifact", 300),
+        (
+            state("interrupted", runner_request_id="runner-request", artifact_stage="referenced"),
+            {},
+            "revalidate_artifact",
+            300,
+        ),
+        (
+            state(
+                "interrupted",
+                runner_request_id="runner-request",
+                artifact_stage="referenced",
+                actual_cost_cents=250,
+            ),
+            {},
+            "revalidate_artifact",
+            0,
+        ),
         # Unknown cost persists across terminal and interrupted settlement windows.
         (state("interrupted"), {}, "reconcile_billing", 300),
         (state("interrupted", actual_cost_cents=0), {}, "inspect_terminal", 0),
@@ -214,11 +239,10 @@ def test_deadline_missing_worker_and_report_coverage_never_release_hold():
         assert decision.held_cents == 137
         assert decision.settled_cents is None
         assert decision.dispatch_blocked and not decision.execution_enabled
+        # An active worker after sealing contradicts its recorded stop.
         assert decision.action in {
             "integrity_stop",
             "reconcile_runner",
-            "observe_worker",
-            "inspect_stop",
             "revalidate_artifact",
             "reconcile_verifier",
         }
@@ -344,3 +368,91 @@ def test_records_are_immutable_and_untyped_inputs_rejected():
         recovery_decision(asdict(saved), observed(saved))
     with pytest.raises(RecoveryError):
         recovery_decision(saved, {})
+
+
+@pytest.mark.parametrize("phase", ["running", "sealed", "verifying", "completed"])
+def test_acknowledged_phase_requires_bound_worker(phase):
+    with pytest.raises(RecoveryError, match="worker identity"):
+        state(phase, worker_id=None)
+    if phase != "completed":
+        with pytest.raises(RecoveryError, match="worker identity"):
+            state(phase, reconciling=True, worker_id=None)
+    saved = state(phase)
+    with pytest.raises(RecoveryError, match="worker_id"):
+        recovery_decision(saved, observed(saved, runner_status="stopped", worker_id="foreign"))
+
+
+@pytest.mark.parametrize("phase", ["sealed", "verifying"])
+@pytest.mark.parametrize("reconciling", [False, True])
+@pytest.mark.parametrize("deadline", [False, True])
+def test_active_worker_after_sealing_is_an_integrity_stop(phase, reconciling, deadline):
+    saved = state(phase, reconciling=reconciling)
+    inspection = observed(
+        saved,
+        runner_status="active",
+        worker_id="worker",
+        deadline_expired=deadline,
+        artifact_status="valid",
+        evidence_status="complete" if phase == "verifying" else "unknown",
+    )
+    decision = recovery_decision(saved, inspection)
+    assert (decision.action, decision.reason) == ("integrity_stop", "sealed_worker_active")
+    assert decision.held_cents == 300 and decision.dispatch_blocked
+
+
+@pytest.mark.parametrize(
+    "phase,changes,message",
+    [
+        (
+            "dispatch_pending",
+            {"artifact_stage": "referenced"},
+            "artifact reference requires sealed or later phase",
+        ),
+        (
+            "running",
+            {"artifact_stage": "referenced"},
+            "artifact reference requires sealed or later phase",
+        ),
+        (
+            "running",
+            {"artifact_stage": "referenced", "verification_request_id": "verify"},
+            "artifact reference requires sealed or later phase",
+        ),
+        (
+            "sealed",
+            {"verification_request_id": "verify"},
+            "verification intent requires verifying or later phase",
+        ),
+        ("sealed", {"artifact_stage": "none"}, "phase requires referenced artifact"),
+        ("sealed", {"artifact_stage": "durable"}, "phase requires referenced artifact"),
+        (
+            "verifying",
+            {"artifact_stage": "linked", "verification_request_id": None},
+            "phase requires referenced artifact",
+        ),
+        ("completed", {"artifact_stage": "linked"}, "phase requires referenced artifact"),
+        ("verifying", {"verification_request_id": None}, "phase requires verification intent"),
+        ("completed", {"verification_request_id": None}, "phase requires verification intent"),
+    ],
+)
+def test_runtime_phase_prerequisites_are_enforced(phase, changes, message):
+    with pytest.raises(RecoveryError, match=message):
+        state(phase, **changes)
+    if phase != "completed":
+        with pytest.raises(RecoveryError, match=message):
+            state(phase, reconciling=True, **changes)
+
+
+@pytest.mark.parametrize("saved", [state("dispatch_pending"), state("running")])
+@pytest.mark.parametrize(
+    "inspection",
+    [
+        {"runner_status": "active"},
+        {"runner_status": "stopped"},
+        {"runner_status": "stopped", "workspace_verified": True},
+    ],
+)
+def test_worker_observation_requires_worker_identity(saved, inspection):
+    # The state carries a runner request, so only the worker rule can reject these.
+    with pytest.raises(RecoveryError, match="worker identity"):
+        observed(saved, **inspection)
