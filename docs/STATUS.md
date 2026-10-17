@@ -37,7 +37,7 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
   wired to the isolated verifiers, result admission or store transitions. A
   controller crash before admission leaves verification incomplete and retains
   its hold. See [RUNTIME_AUTH.md](RUNTIME_AUTH.md) and ADR 0005. Local verification
-  on this change: 806 passed with real PostgreSQL and Docker probes; locked sync,
+  on this change: 807 passed with real PostgreSQL and Docker probes; locked sync,
   Ruff lint/format and offline package build passed. No Harbor live trials were
   rerun locally for this isolated contract change.
 - On #48: a pure recovery decision function covers synthetic crash observations,
@@ -104,8 +104,8 @@ repository scripts do not mount filesystems with privilege. Public fixtures are
 not a protected holdout and containers share the host kernel. See
 [HARBOR_AUDIT.md](HARBOR_AUDIT.md) for the measured boundary.
 
-M0 contract defaults, production identity, license, branch protection and
-vulnerability-reporting setup remain owner decisions. Green CI and merged code
+Production identity, license, branch protection and vulnerability-reporting
+setup remain owner decisions. Green CI and merged code
 are not owner acceptance or evidence of product efficacy.
 
 Owner review update, 2026-10-17: Dillon approved the existing synthetic scope,

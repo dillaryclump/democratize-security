@@ -288,3 +288,30 @@ def test_expected_context_cannot_be_imported_from_an_incoming_dictionary(context
     with pytest.raises(AuthenticationError, match="independently selected"):
         VerifierSession(asdict(context))
     assert context.protocol == PROTOCOL
+
+
+def test_forked_process_cannot_use_the_original_controllers_live_session(context):
+    session = VerifierSession(context)
+    raw = signed(session)
+    reader, writer = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(reader)
+        refused = []
+        for operation in (session.verifier_nonce, lambda: session.authenticate(raw)):
+            try:
+                operation()
+            except AuthenticationError:
+                refused.append(True)
+        os.write(writer, b"refused" if len(refused) == 2 else b"unexpected acceptance")
+        os.close(writer)
+        os._exit(0)
+    os.close(writer)
+    try:
+        observed = os.read(reader, 100)
+    finally:
+        os.close(reader)
+        _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert observed == b"refused"
+    assert session.authenticate(raw).complete is True

@@ -8,6 +8,7 @@ do not launch a verifier, persist acceptance, transition a trial or grant dispat
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 from dataclasses import asdict, dataclass
@@ -213,12 +214,13 @@ class VerifierSession:
     idempotent; conflicting valid reports permanently stop this session.
     """
 
-    __slots__ = ("_context", "_nonce", "_public", "_observation", "_conflict")
+    __slots__ = ("_context", "_nonce", "_public", "_observation", "_conflict", "_pid")
 
     def __init__(self, expected: VerificationContext):
         if not isinstance(expected, VerificationContext):
             raise AuthenticationError("An independently selected trusted context is required")
         self._context = expected
+        self._pid = os.getpid()
         self._nonce = secrets.token_bytes(32)
         public = {
             "schema_version": 1,
@@ -239,9 +241,15 @@ class VerifierSession:
 
     def verifier_nonce(self):
         """Private launcher transport only; never persist or log this value."""
+        self._owned()
         return self._nonce
 
+    def _owned(self):
+        if os.getpid() != self._pid:
+            raise AuthenticationError("Verifier session belongs to another controller process")
+
     def authenticate(self, raw: bytes) -> AuthenticatedObservation:
+        self._owned()
         if self._conflict:
             raise AuthenticationError("Conflicting verifier reports stopped this session")
         envelope = _decode(raw)

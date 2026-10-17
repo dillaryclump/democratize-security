@@ -36,6 +36,9 @@ The `complete` property describes check accounting and does not mean success.
 An exact same-envelope authentication retry is idempotent. Two different valid
 reports for one session permanently stop it. Cross-request or cross-restart
 replay is rejected, including a restart with identical public execution identities.
+Nonce transport and authentication also reject a session inherited by a forked
+controller process. Store admission still requires its own generation/revision
+fencing; process binding here is not durable ownership or memory isolation.
 
 ## Nonce lifetime and crash policy
 
