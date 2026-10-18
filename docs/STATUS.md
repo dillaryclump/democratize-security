@@ -3,9 +3,10 @@
 Updated: 2026-10-17 UTC. Report contracts #39, durable evidence objects #41,
 offline evidence ledger #43 and verification intent #45 are merged into main
 through `c5a177c`, with successful CI on all four reviewed source heads.
-Handoff #47 merged at `99a62f7` with CI run 39039851019 passing. Issue #48
-adds the pure recovery policy. Its PR #49 (`b374d24`) is integrated with review
-fixes on `claude/eager-shannon-dsad3b`; consult that PR for merge and CI status.
+Handoff #47 merged at `99a62f7` with CI run 39039851019 passing. Pure recovery
+decisions (#48/#49), including review fixes, merged through #52 at `061cd1a`;
+main CI run [39054062485](https://github.com/dillaryclump/democratize-security/actions/runs/39054062485)
+passed. Durable controller fencing remains separately claimed in #53.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before claiming
 work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
@@ -37,6 +38,15 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
   local controller ownership only; no runtime recovery or dispatch is enabled.
   Local locked checks: 827 passed, no skips, on Python 3.12.13 with PostgreSQL
   and all seven Docker worker cases enabled; Ruff, format and build passed.
+- Issue #56 adds the standard-library per-request verifier authentication
+  contract: exact trusted context, a fresh in-memory nonce, canonical signed
+  reports, replay rejection and detached authenticated observations. It is not
+  wired to the isolated verifiers, result admission or store transitions. A
+  controller crash before admission leaves verification incomplete and retains
+  its hold. See [RUNTIME_AUTH.md](RUNTIME_AUTH.md) and ADR 0005. Local verification
+  on this change: 807 passed with real PostgreSQL and Docker probes; locked sync,
+  Ruff lint/format and offline package build passed. No Harbor live trials were
+  rerun locally for this isolated contract change.
 - On #48: a pure recovery decision function covers synthetic crash observations,
   rejects stale/foreign context and preserves uncertain cost holds. It emits
   inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
@@ -99,9 +109,17 @@ repository scripts do not mount filesystems with privilege. Public fixtures are
 not a protected holdout and containers share the host kernel. See
 [HARBOR_AUDIT.md](HARBOR_AUDIT.md) for the measured boundary.
 
-M0 contract defaults, production identity, license, branch protection and
-vulnerability-reporting setup remain owner decisions. Green CI and merged code
+Production identity, license, branch protection and vulnerability-reporting
+setup remain owner decisions. Green CI and merged code
 are not owner acceptance or evidence of product efficacy.
+
+Owner review update, 2026-10-17: Dillon approved the existing synthetic scope,
+contract defaults and review of M2 evidence/residual limitations; recorded in
+[#19](https://github.com/dillaryclump/democratize-security/issues/19#issuecomment-6238276266).
+Issue #19 remains open pending bounded worker-host proof. Actual VM provisioning
+is deferred to Dillon's better computer. Production identity and the other owner
+decisions above remain unresolved. Infrastructure/model spending has no approved
+finite budget, and this approval does not enable execution.
 
 ## Handoff maintenance
 
