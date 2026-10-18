@@ -30,10 +30,17 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
 - Store v5 commits verification intent before admitting new schema-v2
   evidence bindings. Historical evidence remains unchanged and cannot acquire
   retrospective intent. This records expectations, not verifier authentication.
+- On #53: store v6 adds durable append-only controller generations, validated
+  current-generation access and process/generation fencing before every write,
+  including exact retries and conflict-stop inserts. Explicit migration validates
+  complete v5 history first and preserves historical bytes. This branch implements
+  local controller ownership only; no runtime recovery or dispatch is enabled.
+  Local locked checks: 827 passed, no skips, on Python 3.12.13 with PostgreSQL
+  and all seven Docker worker cases enabled; Ruff, format and build passed.
 - On #48: a pure recovery decision function covers synthetic crash observations,
   rejects stale/foreign context and preserves uncertain cost holds. It emits
   inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
-  durable controller fencing is implemented by this slice. Review fixes:
+  durable controller fencing is implemented by the #48 slice. Review fixes:
   - acknowledged phases require the bound worker, so a foreign worker's
     observation is rejected;
   - a worker active after sealing is an integrity stop;
@@ -59,9 +66,8 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 ## Next bounded work
 
-1. Review/integrate #48, then implement durable controller-generation ownership
-   and fencing under the process lock, including crash/reopen and stale-write tests.
-   Connect validated store projections to recovery decisions in a separate slice.
+1. Review/integrate #53 controller-generation ownership and fencing. Connect
+   validated store projections to recovery decisions in a separate slice.
    Ambiguous request outcomes must retain holds and never emit resubmission.
 2. Define and implement the trusted runtime authentication boundary and
    accepted-result lifecycle. Persisted intent, hashes and report consistency

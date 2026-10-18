@@ -5,7 +5,8 @@ attempt/budget accounting are merged via #33**, as described below.
 The external recovery engine remains unimplemented. Issue #48 adds a standalone
 pure policy for synthetic recovery observations; see [RECOVERY.md](RECOVERY.md).
 It returns inspection advice without changing store state or enabling execution.
-Durable controller generations and runtime integration remain separate work.
+Store v6 adds durable controller generations and write fencing (issue #53),
+described below. Runtime integration remains separate work.
 Integration #33 merged at
 `d6c2657`; implementation originates in #26/#28/#30. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
 This contract does not approve model execution or change campaign schema v1,
@@ -43,7 +44,7 @@ open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
 refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
-version 5; versions 2, 3 and 4 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
+version 6; versions 2, 3, 4 and 5 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
 Version 1 had only campaigns, immutable planned trials and import events at
 sequence zero. Version 2 adds the bounded accounting API below. It still has no
@@ -123,7 +124,7 @@ Upgrade an existing version 1 store with `PlanStore(directory, migrate=True)`.
 The exact old schema and all plans/import events are validated before migration.
 New tables/triggers and the version bump commit atomically; old rows are never
 rewritten. Normal opening refuses version 1 rather than implicitly modifying it.
-New stores now start at version 5. All old versions require explicit migration;
+New stores now start at version 6. All old versions require explicit migration;
 old accounting and, for v3, artifact bindings are validated before schema changes. Unknown versions or altered schemas are rejected.
 Take a verified backup before migrating valuable data; no backup tool ships here.
 
@@ -298,6 +299,80 @@ SQL insert/commit and migration failures, and process death immediately before o
 after intent/migration commit. Existing v1-v3 migration and evidence durability
 regressions remain required. These tests prove process-crash behavior, not
 power-loss durability or real verifier authentication.
+
+
+## Durable controller generations and write fencing (version 6, issue #53)
+
+Every successful `PlanStore` open allocates a store-local positive integer
+`controller_generation`, including opens used only for reads. The process first
+acquires the existing nonblocking exclusive flock, checks the exact schema,
+validates all old records and object references, and requires SQLite FULL sync.
+An independent `BEGIN IMMEDIATE` transaction then appends the next
+`(generation, process_id)` to immutable `controller_generations`. The accessor
+publishes that value only after its commit returns. PID identifies process
+ownership of this handle; generation distinguishes successive controllers even
+when the operating system reuses a PID.
+
+The complete generation history must start at 1 and remain contiguous, with
+integer positive PIDs. Corrupt history rejects reopening and writes; it is never
+repaired automatically. SQLite INTEGER exhaustion rejects allocation rather
+than wrapping. SQL triggers reject update/delete of this history. As with the
+rest of the ledger, these checks protect cooperating controller code, not a
+privileged owner editing both records and schema.
+
+A crash before allocation commit leaves no allocated value and publishes no
+handle. A crash after commit consumes that generation even if the process never
+receives the acknowledgement or returns from open. Reopening allocates the next
+value; a committed generation is never reused in that ledger. Creating/migrating
+the schema and allocating ownership are separate transactions. A schema-only v6
+store left by a crash has no allocated generations and safely starts at 1 when
+next opened. These are local process-crash guarantees, not power-loss proof or
+protection against restoring an older backup, cloning a ledger, replacing its
+files, or bypassing the API. An offline copy is not external execution authority.
+
+`store.controller_generation` is a read-only property for trusted runtime
+integration. It validates the history and matches the tip against the open
+handle's generation and process. It rejects a closed, fork-inherited or
+superseded handle. Never carry an open `PlanStore` across `fork`; the child must
+create its own controller after acquiring ownership. Do not manually release,
+replace or share the flock or ledger while the handle is open.
+
+Every write API (`import_campaign`, `record_accounting`, `record_artifact`,
+`record_verification_intent`, `record_evidence`) enters the same fenced
+`BEGIN IMMEDIATE` transaction. The process and generation check runs before any
+SQL mutation, persistent integrity-stop insertion, exact-retry return, artifact
+publication or evidence durability reconciliation. Holding the SQLite write
+lock through commit/rollback prevents a successor from allocating between the
+check and effects. A superseded handle fails with no new records or file effects,
+even if its original flock was accidentally released. A valid old read snapshot
+is not a write capability.
+
+Exact canonical event/request retries remain deliberate no-ops within the current
+generation and after a new controller reopens the ledger. The new owner validates
+the original records and referenced files before returning the original result;
+it does not rewrite them or fabricate their provenance. Conflicting identity
+reuse by the current owner still durably records the existing integrity stop.
+Both exact and conflicting retries through a stale or fork-inherited handle fail
+at the fence; stale callbacks cannot insert stops in a successor's ledger.
+Generations do not replace expected attempt revisions or authorize resubmission.
+
+Upgrade existing v5 stores only with `PlanStore(directory, migrate=True, ...)`,
+providing their artifact/evidence directories. Before adding the generation table
+and triggers or changing the version, migration validates plans, accounting,
+artifacts, verification intents and evidence under the original v5 schema. The
+schema addition and version bump commit atomically; all historical rows and
+canonical JSON bytes remain unchanged. Existing v1-v4 migrations retain the same
+explicit gate and validate their corresponding historical contracts. Migration
+never fabricates controller ownership for historical events.
+
+`tests/test_controller_generations.py` covers reopen, immutable history,
+corruption, lock contention, real forked handles, every writer's insertion,
+retry/conflict paths after simulated lock loss, cross-generation idempotency,
+SQL rollback and abrupt process death before/after allocation and migration
+commit. Existing v1-v4 migration and import/accounting/artifact/evidence/intent
+crash tests remain required; their record-transaction fault injection starts
+after ownership allocation. Runtime recovery, authenticated result acceptance
+and external execution remain separate work and gates.
 
 ## Scope and invariants
 
