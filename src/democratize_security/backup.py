@@ -21,7 +21,8 @@ from democratize_security.contracts import _unique_pairs, digest
 from democratize_security.evidence import MAX_EVIDENCE_BYTES
 from democratize_security.store import VERSION, PlanStore
 
-SUPPORTED_STORE_VERSIONS = frozenset({5})
+# Added schemas require reviewed object, ownership and restoration semantics.
+SUPPORTED_STORE_VERSIONS = frozenset({6})
 MAX_DATABASE_BYTES = 512 * 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_BACKUP_FILES = 100_001
@@ -119,6 +120,7 @@ def _references(store):
     """Only this explicitly supported schema's referenced object kinds are copied."""
     if VERSION not in SUPPORTED_STORE_VERSIONS:
         raise BackupError("Store version requires a reviewed backup implementation")
+    _ = store.controller_generation  # Revalidate v6 ownership before snapshot admission.
     campaigns = [
         campaign_id
         for (campaign_id,) in store._connection().execute(
@@ -166,6 +168,11 @@ def _manifest(directory):
             "restore_requires_reconciliation",
         }:
             raise BackupError("Invalid backup manifest fields")
+        if type(record["store_version"]) is int and record["store_version"] == 5:
+            raise BackupError(
+                "Version 5 backup requires its matching backup tool: restore there, "
+                "explicitly migrate that ledger, then create a new version 6 backup"
+            )
         if (
             type(record["schema_version"]) is not int
             or record["schema_version"] != 1
@@ -232,8 +239,8 @@ def _check_files(directory, manifest, *, published):
 
 
 def _validate_payload(directory, manifest):
-    # PlanStore may allocate controller generations in future supported schemas.
-    # Validate a private copy, so verification never modifies the frozen snapshot.
+    # Store v6 allocates a controller generation on every successful open.
+    # Validate a private copy, preserving the frozen snapshot and its history.
     with tempfile.TemporaryDirectory(prefix="ds-backup-validation-") as temporary:
         ledger = Path(temporary) / "ledger"
         ledger.mkdir(mode=0o700)

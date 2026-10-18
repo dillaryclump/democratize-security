@@ -126,7 +126,9 @@ New tables/triggers and the version bump commit atomically; old rows are never
 rewritten. Normal opening refuses version 1 rather than implicitly modifying it.
 New stores now start at version 6. All old versions require explicit migration;
 old accounting and, for v3, artifact bindings are validated before schema changes. Unknown versions or altered schemas are rejected.
-Take a verified backup before migrating valuable data; no backup tool ships here.
+Take a verified backup before migrating valuable data. The current offline
+[backup tool](BACKUP.md) supports only store v6; existing v5 archives need their
+matching implementation before explicit source migration.
 
 Tests abruptly exit subprocesses before/after prepare, interruption, settlement
 and migration commits. Faults between projection and event writes must roll back
@@ -355,6 +357,14 @@ reuse by the current owner still durably records the existing integrity stop.
 Both exact and conflicting retries through a stale or fork-inherited handle fail
 at the fence; stale callbacks cannot insert stops in a successor's ledger.
 Generations do not replace expected attempt revisions or authorize resubmission.
+
+The reviewed offline [backup tool](BACKUP.md) explicitly supports v6. Creating a
+backup takes ownership and appends one source generation, then snapshots that
+complete history coherently. Package verification and restoration validate only
+private scratch database copies; frozen/restored bytes and history remain exact
+until the restored store is deliberately opened. Rehashed generation corruption
+still rejects the package. This does not fence restored runtime requests or jobs;
+`restore.json` remains advisory, and v7/runtime restore support is separate work.
 
 Upgrade existing v5 stores only with `PlanStore(directory, migrate=True, ...)`,
 providing their artifact/evidence directories. Before adding the generation table
