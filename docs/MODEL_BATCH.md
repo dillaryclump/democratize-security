@@ -69,6 +69,9 @@ cost = (ordinary * input_rate + cache_read * read_rate
 Cache-write prices replace ordinary input prices for those tokens; the estimator
 does not charge both. For pessimistic quotes, every input token uses the highest
 of the verified input/read/write rates. No cache-hit savings are assumed.
+An absent cache-write rate means unknown: it blocks trial ceilings and next-call
+quotes. A verified nonbillable category must have an explicit zero rate; an
+adapter must establish that capability rather than infer it from missing usage.
 
 ## Six-trial proposal
 

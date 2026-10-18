@@ -74,7 +74,7 @@ def load_json(path: Path) -> dict:
 
     try:
         return json.loads(data, object_pairs_hook=_unique_pairs, parse_constant=invalid_constant)
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise ContractError(f"invalid budget JSON: {error}") from error
 
 
@@ -101,6 +101,8 @@ class RateCard:
 
     @property
     def maximum_input_price(self) -> int:
+        if self.cache_write is None:
+            raise ContractError("unverified cache-write price prohibits a worst-case quote")
         return max(self.input, self.cached_input, self.cache_write or 0)
 
 

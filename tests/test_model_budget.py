@@ -96,8 +96,8 @@ def test_long_context_cannot_use_short_context_prices(sol):
 def test_ceiling_uses_cumulative_limits_and_highest_input_price(sol, limits):
     assert trial_ceiling(sol, limits) == Fraction("2.25")
     assert trial_ceiling(sol, replace(limits, max_requests=1)) == Fraction("0.41")
-    # A provider with no separately billed cache writes uses ordinary input.
-    assert trial_ceiling(replace(sol, cache_write=None), limits) == Fraction("2")
+    # An explicitly verified nonbillable cache-write category has a zero rate.
+    assert trial_ceiling(replace(sol, cache_write=0), limits) == Fraction("2")
 
 
 def test_highest_input_price_is_not_assumed_to_be_cache_write(sol, limits):
@@ -132,6 +132,21 @@ def test_next_request_reserves_input_overhead_and_all_output(sol, limits):
         quote(sol, limits, preflight_input_tokens=64001)
     with pytest.raises(ContractError, match="insufficient budget"):
         quote(sol, limits, remaining_usd=Fraction("0.4099999999"))
+
+
+def test_unknown_cache_write_price_cannot_certify_a_finite_ceiling_or_next_request(sol, limits):
+    rate = replace(sol, cache_write=None)
+    with pytest.raises(ContractError, match="unverified cache-write"):
+        trial_ceiling(rate, limits)
+    with pytest.raises(ContractError, match="unverified cache-write"):
+        quote(rate, limits)
+
+
+def test_proposal_cannot_silently_exclude_an_unpriced_input_category(proposal, pricing):
+    pricing["rates"][0]["prices"]["cache_write"] = None
+    proposal["pricing_snapshot_sha256"] = digest(pricing)
+    with pytest.raises(ContractError, match="unverified cache-write"):
+        estimate_proposal(proposal, pricing)
 
 
 @pytest.mark.parametrize(
@@ -292,6 +307,16 @@ def test_ambiguous_nonfinite_malformed_and_oversized_json_fails(tmp_path, text):
     path.write_text(text)
     with pytest.raises(ContractError):
         load_json(path)
+
+
+def test_excessively_nested_json_fails_as_a_contract_error(tmp_path, capsys):
+    path = tmp_path / "deeply-nested.json"
+    path.write_text("[" * 100000 + "0" + "]" * 100000)
+    with pytest.raises(ContractError, match="invalid budget JSON"):
+        load_json(path)
+    assert main([str(path), str(PRICING)]) == 2
+    output = capsys.readouterr()
+    assert output.out == "" and "Invalid model-budget proposal" in output.err
 
 
 def test_estimator_command_is_offline_and_never_emits_execution_authority(capsys):
