@@ -1,7 +1,7 @@
 # Verified offline backup and restore
 
 `democratize_security.backup` implements the offline backup prerequisite from
-[PERSISTENCE.md](PERSISTENCE.md). It supports store **version 6** only. It preserves
+[PERSISTENCE.md](PERSISTENCE.md). It supports store **version 7** only. It preserves
 the entire SQLite ledger and every referenced sealed artifact and offline evidence
 object. It performs no migration, model call, external job, result acceptance or
 cost settlement. It does not modify the offline campaign or verifier protocol.
@@ -39,14 +39,16 @@ directories. Unknown-cost holds, interruptions, planned trials, immutable events
 verification intent and incomplete/failed reports retain their original meaning.
 A saved passing offline report remains an offline observation. The restored
 ledger initially retains the snapshot's exact ownership history and database
-bytes; its first successful `PlanStore` open appends the next local generation.
+bytes plus one restore fence; its first successful `PlanStore` open appends the
+next local generation. The fence blocks preparation and dispatch until
+`PlanStore.reconcile_restore` records an explicit reconciliation.
 
-Version 5 source ledgers require an explicit `PlanStore(..., migrate=True, ...)`
-upgrade before a new backup can be created. This version does not silently
-migrate or relabel v5 archives. Use the matching v5 backup implementation to
-restore an existing v5 package, explicitly migrate that restored ledger, then
-create and verify a new v6 backup. Keep the old archive unchanged. Future schemas,
-including v7, require separately reviewed backup/reference/restore semantics.
+Version 5 and 6 source ledgers require an explicit `PlanStore(..., migrate=True,
+...)` upgrade before a new backup can be created. This version does not silently
+migrate or relabel v5/v6 archives and refuses them with these instructions: use
+the matching backup implementation to restore the old package, explicitly
+migrate that restored ledger, then create and verify a new v7 backup. Keep the
+old archive unchanged. Future schemas require separately reviewed semantics.
 
 ## Snapshot and validation behavior
 
@@ -54,7 +56,7 @@ including v7, require separately reviewed backup/reference/restore semantics.
 An existing owner causes immediate refusal. Opening validates the exact schema,
 SQLite integrity/foreign keys, whole plans, immutable event history, attempt
 projections, artifact bindings, intent, evidence bindings and referenced bytes.
-It also validates the complete v6 generation history and durably appends a new
+It also validates the complete generation history and durably appends a new
 controller generation to the source ledger before creating the snapshot. That
 allocation remains consumed if the later backup fails. The snapshot contains
 the source's complete history through that allocation; no historical row changes.
@@ -83,7 +85,7 @@ able to rewrite both ledger and objects is outside this integrity boundary.
 
 `verify_backup` does not open the frozen snapshot's database as a writable store.
 It validates a private database copy, and rechecks the package files afterward.
-This leaves the snapshot byte-identical while v6 allocates a temporary controller
+This leaves the snapshot byte-identical while the store allocates a temporary controller
 generation in the disposable scratch database. Repeated validation never appends
 to the frozen snapshot or restored database. `restore_backup` validates the package
 before creating its destination, copies its exact inventoried bytes, revalidates
@@ -109,15 +111,15 @@ the tool does not provision or upload storage.
 Restoration never proves external work stopped or that provider bills are known.
 Generation monotonicity applies to one unchanged ledger lineage. Copying an older
 snapshot preserves that history, but its subsequent local allocations cannot fence
-a separate live source or jobs started after the snapshot. This version adds no
-runtime restoration gate; #62 owns that separately reviewed lifecycle integration.
-`restore.json` records reconciliation advice; it is **not persistent runtime
-fencing**. All current plans still have execution disabled. Before any future
-runtime enables dispatch, it must reconcile requests that could postdate a
-snapshot and enforce its own durable restoration fence. New store versions are
-refused until their added references, controller-generation behavior and restore
-fencing have explicit backup coverage. Runtime acceptance records and private
-verification secret stores are not supported or silently omitted by this version.
+a separate live source or jobs started after the snapshot. Therefore every
+restore inserts a durable fence (`restore-<manifest digest>`, also recorded as
+`restore_fence_id` in `restore.json`) before acknowledging. Runtime preparation
+and dispatch stay blocked until the operator moves each restored nonterminal
+runtime attempt to `reconciling` and calls `reconcile_restore` with a statement
+of how external requests and bills were checked. The fence is not proof that
+work stopped. Admitted runtime results and their signed envelopes are database
+rows and are carried by the snapshot; verifier nonces are never stored. New
+store versions are refused until they have explicit backup coverage.
 
 ## Evidence
 
@@ -128,6 +130,8 @@ canonical manifests, no-overwrite behavior, write/sync faults and abrupt process
 death around publication. V6 regressions assert source/snapshot/restore ownership
 rows exactly, unchanged frozen database bytes after repeated scratch validation,
 source and rehashed snapshot generation-history corruption, explicit v5 rejection
-and successful backup after deliberate source migration. Run the full required
+and successful backup after deliberate source migration. V7 regressions assert
+the restored fence, that it blocks the budget and dispatch until reconciled,
+that it survives reopen, and that v5/v6 packages are refused with instructions. Run the full required
 repository checks as well; PostgreSQL and Docker integration require their
 configured disposable services.

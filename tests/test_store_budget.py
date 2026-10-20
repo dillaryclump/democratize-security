@@ -78,6 +78,7 @@ def test_atomic_reservation_interruption_settlement_and_idempotency(tmp_path, ca
             unknown_cost_count=0,
             blocked=False,
             overrun=False,
+            restore_fenced=False,
             execution_enabled=False,
         )
         with pytest.raises(StoreError, match="Insufficient"):

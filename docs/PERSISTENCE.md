@@ -6,7 +6,9 @@ The external recovery engine remains unimplemented. Issue #48 adds a standalone
 pure policy for synthetic recovery observations; see [RECOVERY.md](RECOVERY.md).
 It returns inspection advice without changing store state or enabling execution.
 Store v6 adds durable controller generations and write fencing (issue #53),
-described below. Runtime integration remains separate work.
+described below. Store v7 (issue #62) adds the runtime attempt lifecycle,
+authenticated result admission and restore fences in the same ledger; no
+dispatcher or runner is connected to it.
 Integration #33 merged at
 `d6c2657`; implementation originates in #26/#28/#30. ADR [0004](decisions/0004-persistence-recovery.md) records the choice.
 This contract does not approve model execution or change campaign schema v1,
@@ -44,7 +46,7 @@ open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
 refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
-version 6; versions 2, 3, 4 and 5 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
+version 7; versions 2, 3, 4, 5 and 6 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
 Version 1 had only campaigns, immutable planned trials and import events at
 sequence zero. Version 2 adds the bounded accounting API below. It still has no
@@ -363,8 +365,8 @@ backup takes ownership and appends one source generation, then snapshots that
 complete history coherently. Package verification and restoration validate only
 private scratch database copies; frozen/restored bytes and history remain exact
 until the restored store is deliberately opened. Rehashed generation corruption
-still rejects the package. This does not fence restored runtime requests or jobs;
-`restore.json` remains advisory, and v7/runtime restore support is separate work.
+still rejects the package. Store v7 replaces this with v7-only backups whose
+restores carry a durable restore fence; see the version 7 section below.
 
 Upgrade existing v5 stores only with `PlanStore(directory, migrate=True, ...)`,
 providing their artifact/evidence directories. Before adding the generation table
@@ -383,6 +385,68 @@ commit. Existing v1-v4 migration and import/accounting/artifact/evidence/intent
 crash tests remain required; their record-transaction fault injection starts
 after ownership allocation. Runtime recovery, authenticated result acceptance
 and external execution remain separate work and gates.
+
+## Runtime attempt lifecycle, admission and restore fences (version 7, issue #62)
+
+Store v7 records runtime attempts in the same `attempts`/`attempt_events` ledger
+as offline accounting, marked `"mode": "runtime"`. A single attempt history may
+not mix modes; replay rejects it. Offline writers (`record_accounting`,
+`record_artifact`, `record_verification_intent`, `record_evidence`) reject runtime
+attempts, and `record_runtime` rejects offline ones. Every runtime write uses the
+v6 fenced `BEGIN IMMEDIATE` transaction, revalidates every attempt and re-reads
+every sealed artifact before any effect. Exact event retries return the original
+state; conflicting reuse persists the existing integrity stop.
+
+`record_runtime(event_id, request)` applies the pure reducer
+`runtime_events.reduce_runtime`:
+
+| Action | From | To | Extra checks |
+| --- | --- | --- | --- |
+| `prepare` | none | `preparing` | Planned trial and task revision; budget not blocked; full cost hold |
+| `dispatch_intent` | `preparing` | `dispatch_pending` | No unreconciled restore fence or integrity stop. Commit **before** any external submission; never submit twice |
+| `acknowledge` | `dispatch_pending` | `running` | Same runner request; binds the worker |
+| `seal` | `running` | `sealed` | Stop observation hash; artifact bytes re-read and durability reconciled before the reference commits |
+| `verify_intent` | `sealed` | `verifying` | Challenge built from `runtime_context`: current controller generation, next revision and artifact binding digest |
+| `reconcile` | any active | `reconciling` | Keeps `previous_phase`; `resolve` with an observation hash returns to it |
+| `interrupt` | nonterminal | `interrupted` | Bounded reason; hold retained until `settle` |
+| `settle` | terminal, unsettled | same | Actual cost and receipt identity |
+
+`record_runtime` cannot complete an attempt. Only `admit_result(event_id,
+attempt_id, expected_revision, session, raw)` can: it rebuilds the expected
+`VerificationContext` from validated state, requires the live `VerifierSession`
+to hold the exact committed challenge, authenticates the raw envelope and commits
+the immutable `runtime_results` row, admit event and new attempt state together.
+Complete coverage completes the attempt with its pass or fail outcome; partial
+coverage interrupts it as `incomplete_verification` and keeps the hold. The
+signed envelope is stored inline (base64) with its public observation; the nonce
+never is. Admission after a controller restart is impossible because the session
+and nonce do not survive it, so the attempt stays `verifying` for reconciliation.
+
+`backup.restore_backup` now inserts one `restore_fences` row into the restored
+ledger before writing `restore.json`. While any fence lacks a
+`restore_reconciliations` row, `budget_snapshot` reports `restore_fenced` and
+`blocked`, preparation is refused and `dispatch_intent` is refused.
+`reconcile_restore(event_id, fence_id, statement)` clears a fence only after every
+restored nonterminal runtime attempt has been moved to `reconciling`; the bounded
+statement records how the operator established that no unrecorded external work
+remains. Clearing a fence does not resume an attempt. The three new tables are
+append-only under SQL triggers and validated on open.
+
+`recovery_state(attempt_id)` projects one fully validated runtime attempt onto
+`recovery.RecoveryState` for `recovery_decision`. Its generation is the current
+inspecting controller. Integrity failures raise instead of returning
+`integrity_ok=False`. Advice remains advice: no transition, dispatch or
+resubmission follows from it.
+
+Upgrade v6 stores only with `migrate=True`; migration validates the complete v6
+records and generation history first, then adds the tables atomically without
+changing historical bytes. `tests/test_runtime_events.py`,
+`tests/test_runtime_store.py` and `tests/test_runtime_admission.py` cover every
+transition, exact retry and conflict across reopen, superseded handles, fences,
+stale challenges, tampered artifacts and envelopes, incomplete coverage, mixed
+histories, migration and the recovery projection, including a lost acknowledgement
+that never yields resubmission. These are local process-level guarantees; no live
+runner, provider receipt or power-loss behavior is proven.
 
 ## Scope and invariants
 

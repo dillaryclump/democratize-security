@@ -249,6 +249,9 @@ def make_v5(ledger):
     # The pinned old schema cannot contain any ownership history.
     assert digest(V5_SCHEMA) == "83326229299be077b7f4ce08c4b790ac7ed635d88ba9cdb9682efaa51e16a337"
     with sqlite3.connect(ledger / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE runtime_results")
+        db.execute("DROP TABLE restore_reconciliations")
+        db.execute("DROP TABLE restore_fences")
         db.execute("DROP TABLE controller_generations")
         db.execute("PRAGMA user_version=5")
         assert (
@@ -273,7 +276,17 @@ def test_v5_migration_requires_opt_in_and_preserves_every_historical_byte(tmp_pa
         assert store.controller_generation == 1
         assert store._db.execute("PRAGMA user_version").fetchone() == (VERSION,)
         assert [
-            line for line in store._db.iterdump() if "controller_generations" not in line
+            line
+            for line in store._db.iterdump()
+            if all(
+                name not in line
+                for name in (
+                    "controller_generations",
+                    "runtime_results",
+                    "restore_fences",
+                    "restore_reconciliations",
+                )
+            )
         ] == before
         before = list(store._db.iterdump())
         assert store.import_campaign(campaign)
@@ -452,7 +465,19 @@ PlanStore(Path(sys.argv[1]), objects_directory=Path(sys.argv[2]),
         assert db.execute("PRAGMA user_version").fetchone() == (
             5 if phase == "before" else VERSION,
         )
-        assert [line for line in db.iterdump() if "controller_generations" not in line] == before
+        assert [
+            line
+            for line in db.iterdump()
+            if all(
+                name not in line
+                for name in (
+                    "controller_generations",
+                    "runtime_results",
+                    "restore_fences",
+                    "restore_reconciliations",
+                )
+            )
+        ] == before
     with PlanStore(ledger, migrate=True, **kwargs) as store:
         assert store.controller_generation == 1
 

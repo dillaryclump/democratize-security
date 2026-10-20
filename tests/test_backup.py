@@ -5,6 +5,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+from contextlib import closing
 
 import pytest
 from test_store_evidence import build_case, open_store
@@ -49,8 +50,24 @@ def rewrite_manifest(directory, change):
 
 
 def historical_dump(connection):
-    """All pre-v6 record/schema bytes stay unchanged; ownership is separately asserted."""
-    return [line for line in connection.iterdump() if "controller_generations" not in line]
+    """All historical record/schema bytes stay unchanged; ownership and restore fences
+    are separately asserted."""
+    return [
+        line
+        for line in connection.iterdump()
+        if "controller_generations" not in line and 'INSERT INTO "restore_fences"' not in line
+    ]
+
+
+def ledger_rows(database):
+    """Every row except the restore fence that restore_backup adds."""
+    with closing(sqlite3.connect(database)) as db:
+        return [line for line in db.iterdump() if 'INSERT INTO "restore_fences"' not in line]
+
+
+def fence_count(database):
+    with closing(sqlite3.connect(database)) as db:
+        return db.execute("SELECT count(*) FROM restore_fences").fetchone()[0]
 
 
 def generation_rows(connection):
@@ -73,7 +90,7 @@ def test_verified_roundtrip_preserves_full_ledger_references_and_unknown_cost(ca
     assert manifest == backup.verify_backup(snapshot)
     assert manifest["restore_requires_reconciliation"] is True
     assert manifest["execution_enabled"] is False
-    assert manifest["store_version"] == VERSION == 6
+    assert manifest["store_version"] == VERSION == 7
     with sqlite3.connect(snapshot / "ledger/ledger.sqlite3") as db:
         snapshot_history = generation_rows(db)
         assert historical_dump(db) == original
@@ -90,9 +107,16 @@ def test_verified_roundtrip_preserves_full_ledger_references_and_unknown_cost(ca
     assert provenance["backup_sha256"] == digest(manifest)
     assert provenance["execution_enabled"] is False
     assert provenance["reconciliation_required"] is True
-    # Restore validates scratch ownership; its real DB stays byte-identical until open.
+    # Restore validates scratch ownership; its real DB gains only the restore fence.
     for entry in manifest["files"]:
-        assert (snapshot / entry["path"]).read_bytes() == (restored / entry["path"]).read_bytes()
+        if entry["path"] == "ledger/ledger.sqlite3":
+            assert ledger_rows(restored / entry["path"]) == ledger_rows(snapshot / entry["path"])
+        else:
+            assert (snapshot / entry["path"]).read_bytes() == (
+                restored / entry["path"]
+            ).read_bytes()
+    assert provenance["restore_fence_id"] == f"restore-{provenance['backup_sha256']}"
+    assert fence_count(restored / "ledger/ledger.sqlite3") == 1
     with sqlite3.connect(restored / "ledger/ledger.sqlite3") as db:
         assert generation_rows(db) == snapshot_history
     with PlanStore(
@@ -106,8 +130,21 @@ def test_verified_roundtrip_preserves_full_ledger_references_and_unknown_cost(ca
             (generation + 2, os.getpid()),
         ]
         assert store.controller_generation == generation + 2
+        fence = provenance["restore_fence_id"]
+        assert store.unreconciled_restore_fences() == [fence]
         assert store.snapshot(case["plan"]["campaign_id"]) == case["plan"]
         assert store.attempts() == attempts
+        # Identical accounting; only the restore fence differs until reconciled.
+        assert store.budget_snapshot(case["plan"]["campaign_id"]) == {
+            **budget,
+            "restore_fenced": True,
+            "blocked": True,
+        }
+        reconciled = store.reconcile_restore(
+            "reconcile-restore", fence, "No runtime attempts; offline synthetic ledger."
+        )
+        assert reconciled["fence_id"] == fence
+        assert store.unreconciled_restore_fences() == []
         assert store.budget_snapshot(case["plan"]["campaign_id"]) == budget
         assert budget["unknown_cost_count"] == 1 and budget["blocked"]
         assert store.evidence_bindings()[0]["request"] == case["request"]
@@ -417,10 +454,20 @@ os._exit(69)
 def test_unknown_future_store_schemas_refuse_without_creating_destination(
     case, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(backup, "VERSION", 7)
+    monkeypatch.setattr(backup, "VERSION", 8)
     with pytest.raises(backup.BackupError, match="reviewed"):
         create(case, tmp_path / "snapshot")
     assert not (tmp_path / "snapshot").exists()
+
+
+@pytest.mark.parametrize("version", [5, 6])
+def test_older_backup_packages_refused_with_migration_instructions(case, tmp_path, version):
+    snapshot = tmp_path / "snapshot"
+    create(case, snapshot)
+    rewrite_manifest(snapshot, lambda m: m.update(store_version=version))
+    with pytest.raises(backup.BackupError, match="matching backup tool.*explicitly migrate"):
+        backup.restore_backup(snapshot, tmp_path / "restored")
+    assert not (tmp_path / "restored").exists()
 
 
 def test_source_change_during_copy_detected(case, tmp_path, monkeypatch):
@@ -605,7 +652,14 @@ os._exit(69)
     assert process.returncode == 69
     assert (restored / "restore.json").exists() == (boundary != "before_marker")
     for entry in manifest["files"]:
-        assert (restored / entry["path"]).read_bytes() == (snapshot / entry["path"]).read_bytes()
+        if entry["path"] == "ledger/ledger.sqlite3":
+            # The restore adds exactly its fence before writing restore.json.
+            assert ledger_rows(restored / entry["path"]) == ledger_rows(snapshot / entry["path"])
+            assert fence_count(restored / entry["path"]) == 1
+        else:
+            assert (restored / entry["path"]).read_bytes() == (
+                snapshot / entry["path"]
+            ).read_bytes()
     assert backup.verify_backup(snapshot) == manifest
     with pytest.raises(FileExistsError):
         backup.restore_backup(snapshot, restored)
@@ -691,7 +745,8 @@ def test_v6_scratch_allocations_never_change_frozen_or_restored_ownership(
     )
     assert all(rows == [*saved, (saved[-1][0] + 1, os.getpid())] for _, rows in allocations)
     assert database.read_bytes() == original
-    assert (restored / "ledger/ledger.sqlite3").read_bytes() == original
+    assert ledger_rows(restored / "ledger/ledger.sqlite3") == ledger_rows(database)
+    assert fence_count(restored / "ledger/ledger.sqlite3") == 1
     with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
         assert generation_rows(db) == saved
     with PlanStore(
@@ -709,6 +764,9 @@ def test_v5_source_and_archive_require_explicit_migration_not_implicit_relabelin
     database = snapshot / "ledger/ledger.sqlite3"
     for path in (case["ledger"] / "ledger.sqlite3", database):
         with sqlite3.connect(path) as db:
+            db.execute("DROP TABLE runtime_results")
+            db.execute("DROP TABLE restore_reconciliations")
+            db.execute("DROP TABLE restore_fences")
             db.execute("DROP TABLE controller_generations")
             db.execute("PRAGMA user_version=5")
 
@@ -732,4 +790,4 @@ def test_v5_source_and_archive_require_explicit_migration_not_implicit_relabelin
     assert {path: path.read_bytes() for path in original} == original
     with open_store(case, migrate=True) as store:
         assert store.controller_generation == 1
-    assert create(case, tmp_path / "migrated-snapshot")["store_version"] == 6
+    assert create(case, tmp_path / "migrated-snapshot")["store_version"] == 7
