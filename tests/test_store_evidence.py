@@ -310,6 +310,7 @@ def test_immutable_rows_and_rehashed_projection_mismatch(case):
 def make_v3(case):
     assert digest(V3_SCHEMA) == "b4ad26ef24500ea46a364e6890319a7524c21746088896ea5cca983ef95555ed"
     with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE controller_generations")
         db.execute("DROP TABLE verification_intents")
         db.execute("DROP TABLE evidence_bindings")
         db.execute("PRAGMA user_version=3")
@@ -331,7 +332,9 @@ def test_v3_migration_requires_opt_in_and_preserves_exact_records(case):
         assert [
             line
             for line in store._db.iterdump()
-            if "evidence_bindings" not in line and "verification_intents" not in line
+            if "evidence_bindings" not in line
+            and "verification_intents" not in line
+            and "controller_generations" not in line
         ] == before
         seed_intent(case, store)
         assert store.record_evidence("report", case["request"])
@@ -380,13 +383,15 @@ from pathlib import Path
 from democratize_security.store import PlanStore
 original = sqlite3.connect
 class Connection(sqlite3.Connection):
+    armed = sys.argv[4] in ('migrate', 'migration')
     def execute(self, sql, *args):
-        if sql == 'COMMIT' and sys.argv[5] == 'before':
+        if self.armed and sql == 'COMMIT' and sys.argv[5] == 'before':
             os._exit(71)
         return super().execute(sql, *args)
 sqlite3.connect = lambda *a, **kw: original(*a, factory=Connection, **kw)
 store = PlanStore(Path(sys.argv[1]), objects_directory=Path(sys.argv[2]),
     evidence_directory=Path(sys.argv[3]), migrate=sys.argv[4] == 'migrate')
+store._db.armed = True
 if sys.argv[4] == 'bind':
     store.record_evidence('report', json.loads(sys.argv[6]))
 os._exit(72)

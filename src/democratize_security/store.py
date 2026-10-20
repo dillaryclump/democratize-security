@@ -17,7 +17,7 @@ from democratize_security import evidence_objects
 from democratize_security import objects as artifact_objects
 from democratize_security.contracts import _unique_pairs, digest, plan
 
-VERSION = 5
+VERSION = 6
 APPLICATION_ID = 0x44534C31
 MAX_PLAN_BYTES = 16 * 1024 * 1024
 SCHEMA = {
@@ -140,6 +140,19 @@ for _operation in ("UPDATE", "DELETE"):
     )
 
 
+V5_SCHEMA = dict(SCHEMA)
+SCHEMA["controller_generations"] = """CREATE TABLE controller_generations (
+    generation INTEGER PRIMARY KEY NOT NULL CHECK (generation >= 1),
+    process_id INTEGER NOT NULL CHECK (process_id >= 1)
+)"""
+for _operation in ("UPDATE", "DELETE"):
+    _name = f"controller_generations_no_{_operation.lower()}"
+    SCHEMA[_name] = (
+        f"CREATE TRIGGER {_name} BEFORE {_operation} ON controller_generations "
+        "BEGIN SELECT RAISE(ABORT, 'immutable controller generation'); END"
+    )
+
+
 class StoreError(ValueError):
     """The ledger cannot be safely used."""
 
@@ -239,6 +252,8 @@ class PlanStore:
     ):
         self._lock_fd = None
         self._db = None
+        self._owner_pid = os.getpid()
+        self._generation = None
         self._objects_directory = (
             objects_directory.absolute() if objects_directory is not None else None
         )
@@ -270,14 +285,14 @@ class PlanStore:
             application = self._db.execute("PRAGMA application_id").fetchone()[0]
             objects = self._schema()
             fresh = version == 0 and application == 0 and not objects
-            legacy = version in (1, 2, 3, 4) and application == APPLICATION_ID
-            old_schema = {1: V1_SCHEMA, 2: V2_SCHEMA, 3: V3_SCHEMA, 4: V4_SCHEMA}.get(
+            legacy = version in (1, 2, 3, 4, 5) and application == APPLICATION_ID
+            old_schema = {1: V1_SCHEMA, 2: V2_SCHEMA, 3: V3_SCHEMA, 4: V4_SCHEMA, 5: V5_SCHEMA}.get(
                 version, SCHEMA
             )
             if legacy and not migrate:
                 raise StoreError(f"Version {version} requires explicit migrate=True")
             if not fresh and (
-                version not in (1, 2, 3, 4, VERSION) or application != APPLICATION_ID
+                version not in (1, 2, 3, 4, 5, VERSION) or application != APPLICATION_ID
             ):
                 raise StoreError("Unknown ledger version or application; no automatic migration")
             if not fresh and objects != old_schema:
@@ -320,6 +335,8 @@ class PlanStore:
                 self.artifact_bindings()  # Validate old objects before migration commits.
             if legacy and version == 4:
                 self._read_evidence_bindings([])  # Do not invent intents for v4 observations.
+            if legacy and version == 5:
+                self.evidence_bindings()  # Validate v5 intents and evidence before migration.
             if legacy:
                 self._db.execute("BEGIN IMMEDIATE")
                 try:
@@ -334,6 +351,7 @@ class PlanStore:
                     raise
             self.attempts()
             self.evidence_bindings()
+            self._allocate_generation()
         except BaseException:
             self.close()
             raise
@@ -348,7 +366,75 @@ class PlanStore:
     def _connection(self):
         if self._db is None:
             raise StoreError("Ledger is closed")
+        if os.getpid() != self._owner_pid:
+            raise StoreError("Ledger handle belongs to another process; reopen after fork")
         return self._db
+
+    def _generation_tip(self) -> tuple[int, int] | None:
+        """Validate the append-only ownership history, including gaps and SQL types."""
+        rows = (
+            self._connection()
+            .execute(
+                "SELECT generation, process_id FROM controller_generations ORDER BY generation"
+            )
+            .fetchall()
+        )
+        for expected, (generation, process_id) in enumerate(rows, 1):
+            if (
+                type(generation) is not int
+                or generation != expected
+                or (type(process_id) is not int or process_id < 1)
+            ):
+                raise StoreError("Invalid controller generation history")
+        return rows[-1] if rows else None
+
+    def _allocate_generation(self):
+        """Publish ownership only after its own FULL-sync allocation transaction commits."""
+        db = self._connection()
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            tip = self._generation_tip()
+            generation = tip[0] + 1 if tip else 1
+            if generation > 2**63 - 1:
+                raise StoreError("Controller generation exhausted")
+            db.execute(
+                "INSERT INTO controller_generations VALUES (?, ?)",
+                (generation, self._owner_pid),
+            )
+            db.execute("COMMIT")
+            # No caller can observe a speculative, rolled-back generation.
+            self._generation = generation
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+
+    @property
+    def controller_generation(self) -> int:
+        """Validated current ownership for trusted callers; no execution authority."""
+        self._connection()
+        if (
+            self._lock_fd is None
+            or self._generation is None
+            or self._generation_tip() != (self._generation, self._owner_pid)
+        ):
+            raise StoreError("Stale controller generation")
+        return self._generation
+
+    def _begin_write(self):
+        """Fence before retries, integrity stops, object sync or any persistent mutation.
+
+        Keep the SQLite write lock until COMMIT/ROLLBACK. A successor cannot
+        allocate its generation between this check and the transaction's effects.
+        """
+        db = self._connection()
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            _ = self.controller_generation
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+        return db
 
     def import_campaign(self, campaign: dict) -> dict:
         """Atomically import the complete plan; exact re-import is a no-op."""
@@ -357,8 +443,7 @@ class PlanStore:
         if len(serialized.encode("utf-8")) > MAX_PLAN_BYTES:
             raise StoreError("Plan exceeds ledger byte limit")
         campaign_id = expected["campaign_id"]
-        db = self._connection()
-        db.execute("BEGIN IMMEDIATE")
+        db = self._begin_write()
         try:
             if db.execute(
                 "SELECT 1 FROM campaigns WHERE campaign_id = ?", (campaign_id,)
@@ -579,8 +664,7 @@ class PlanStore:
         if len(encoded.encode()) > 4096:
             raise StoreError("Artifact binding request exceeds byte limit")
         request = json.loads(encoded)
-        db = self._connection()
-        db.execute("BEGIN IMMEDIATE")
+        db = self._begin_write()
         try:
             records = self.artifact_bindings()
             duplicates = [
@@ -712,8 +796,7 @@ class PlanStore:
         if len(encoded.encode()) > 2048:
             raise StoreError("Verification intent request exceeds byte limit")
         request = json.loads(encoded)
-        db = self._connection()
-        db.execute("BEGIN IMMEDIATE")
+        db = self._begin_write()
         try:
             self.evidence_bindings()
             records = self.verification_intents()
@@ -907,8 +990,7 @@ class PlanStore:
         if len(encoded.encode()) > 4096:
             raise StoreError("Offline evidence request exceeds byte limit")
         request = json.loads(encoded)
-        db = self._connection()
-        db.execute("BEGIN IMMEDIATE")
+        db = self._begin_write()
         try:
             records = self.evidence_bindings()
             duplicates = [
@@ -1020,8 +1102,7 @@ class PlanStore:
             raise StoreError("Accounting request exceeds byte limit")
         # Detach from caller-owned values before the transaction.
         request = json.loads(encoded_request)
-        db = self._connection()
-        db.execute("BEGIN IMMEDIATE")
+        db = self._begin_write()
         try:
             states = self.attempts()
             duplicates = db.execute(

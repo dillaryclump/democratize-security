@@ -1,11 +1,13 @@
 # Current status and next handoff
 
-Updated: 2026-10-17 UTC. Report contracts #39, durable evidence objects #41,
+Updated: 2026-10-17 America/Denver. Report contracts #39, durable evidence objects #41,
 offline evidence ledger #43 and verification intent #45 are merged into main
 through `c5a177c`, with successful CI on all four reviewed source heads.
-Handoff #47 merged at `99a62f7` with CI run 39039851019 passing. Issue #48
-adds the pure recovery policy. Its PR #49 (`b374d24`) is integrated with review
-fixes on `claude/eager-shannon-dsad3b`; consult that PR for merge and CI status.
+Handoff #47 merged at `99a62f7` with CI run 39039851019 passing. Pure recovery
+decisions (#48/#49), including review fixes, merged through #52 at `061cd1a`;
+main CI run [39054062485](https://github.com/dillaryclump/democratize-security/actions/runs/39054062485)
+passed. Authentication #58 and offline backup #59 are merged through `1fd5468`.
+Controller fencing and explicit v6 backup support are in review in #64 for #53.
 Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before claiming
 work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
@@ -30,10 +32,36 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
 - Store v5 commits verification intent before admitting new schema-v2
   evidence bindings. Historical evidence remains unchanged and cannot acquire
   retrospective intent. This records expectations, not verifier authentication.
+- On #53: store v6 adds durable append-only controller generations, validated
+  current-generation access and process/generation fencing before every write,
+  including exact retries and conflict-stop inserts. Explicit migration validates
+  complete v5 history first and preserves historical bytes. This branch implements
+  local controller ownership only; no runtime recovery or dispatch is enabled.
+  Original fencing head `84592b2`: local locked checks passed 827 tests with no
+  skips, on Python 3.12.13 with PostgreSQL and all seven Docker worker cases.
+  That evidence predates the merged auth/backup compatibility update.
+- Issue #56 adds the standard-library per-request verifier authentication
+  contract: exact trusted context, a fresh in-memory nonce, canonical signed
+  reports, replay rejection and detached authenticated observations. It is not
+  wired to the isolated verifiers, result admission or store transitions. A
+  controller crash before admission leaves verification incomplete and retains
+  its hold. See [RUNTIME_AUTH.md](RUNTIME_AUTH.md) and ADR 0005. Local verification
+  on this change: 807 passed with real PostgreSQL and Docker probes; locked sync,
+  Ruff lint/format and offline package build passed. No Harbor live trials were
+  rerun locally for this isolated contract change.
+- Verified offline backup/restore (#55/#59), with explicit v6 support in #64,
+  preserves historical records and the complete controller-generation history.
+  Only private scratch copies allocate during validation; frozen/restored bytes
+  stay exact until deliberate store open. Corrupt/rehashed generation histories
+  reject; v5 sources/archives require explicit migration using matching tooling.
+  Restore provenance remains advisory, with no persistent runtime reconciliation
+  gate. See [BACKUP.md](BACKUP.md). Combined v6/auth/backup local verification:
+  961 passed, no skips, on Python 3.12.13 with real PostgreSQL and all seven
+  Docker worker cases; locked sync, Ruff lint/format and package build passed.
 - On #48: a pure recovery decision function covers synthetic crash observations,
   rejects stale/foreign context and preserves uncertain cost holds. It emits
   inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
-  durable controller fencing is implemented by this slice. Review fixes:
+  durable controller fencing is implemented by the #48 slice. Review fixes:
   - acknowledged phases require the bound worker, so a foreign worker's
     observation is rejected;
   - a worker active after sealing is an integrity stop;
@@ -59,13 +87,12 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 ## Next bounded work
 
-1. Review/integrate #48, then implement durable controller-generation ownership
-   and fencing under the process lock, including crash/reopen and stale-write tests.
-   Connect validated store projections to recovery decisions in a separate slice.
+1. Review/integrate #53 controller-generation ownership and fencing. Connect
+   validated store projections to recovery decisions in a separate slice.
    Ambiguous request outcomes must retain holds and never emit resubmission.
-2. Define and implement the trusted runtime authentication boundary and
-   accepted-result lifecycle. Persisted intent, hashes and report consistency
-   alone cannot prove a trusted verifier executed. Do not manufacture accepted
+2. Integrate the merged per-request authentication contract with a trusted runtime
+   boundary and accepted-result lifecycle. Persisted intent, hashes and report
+   consistency alone cannot prove a trusted verifier executed. Do not manufacture accepted
    results from the current offline evidence APIs.
 3. Only after persistence/recovery review and M0/M2 acceptance, connect the runner
    on a dedicated bounded worker. Model execution additionally needs an explicitly
@@ -74,7 +101,7 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 ## Remaining gates and limitations
 
 M3 remains partial: no live recovery engine, production dispatcher, authenticated
-accepted-result registry, backup/restore tool, protected final evaluator, paid
+accepted-result registry, runtime restore fence, protected final evaluator, paid
 pilot, demonstrated benchmark improvement or GEPA search exists.
 
 Issue #50: PR #49's CI run 39043199834 failed one `harbor-apps` audit. In the
@@ -93,9 +120,17 @@ repository scripts do not mount filesystems with privilege. Public fixtures are
 not a protected holdout and containers share the host kernel. See
 [HARBOR_AUDIT.md](HARBOR_AUDIT.md) for the measured boundary.
 
-M0 contract defaults, production identity, license, branch protection and
-vulnerability-reporting setup remain owner decisions. Green CI and merged code
+Production identity, license, branch protection and vulnerability-reporting
+setup remain owner decisions. Green CI and merged code
 are not owner acceptance or evidence of product efficacy.
+
+Owner review update, 2026-10-17: Dillon approved the existing synthetic scope,
+contract defaults and review of M2 evidence/residual limitations; recorded in
+[#19](https://github.com/dillaryclump/democratize-security/issues/19#issuecomment-6238276266).
+Issue #19 remains open pending bounded worker-host proof. Actual VM provisioning
+is deferred to Dillon's better computer. Production identity and the other owner
+decisions above remain unresolved. Infrastructure/model spending has no approved
+finite budget, and this approval does not enable execution.
 
 ## Handoff maintenance
 
