@@ -19,6 +19,10 @@ V7_TABLES = ("runtime_results", "restore_reconciliations", "restore_fences")
 
 @pytest.fixture
 def case(tmp_path):
+    return build_case(tmp_path)
+
+
+def build_case(tmp_path):
     ledger, artifact_dir, source = (tmp_path / n for n in ("ledger", "artifacts", "source"))
     for path in (ledger, artifact_dir, source):
         path.mkdir()

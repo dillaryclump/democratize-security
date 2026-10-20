@@ -4,19 +4,27 @@ The caller supplies an existing trusted local directory with a stable pathname.
 One POSIX process owns it until close; files are not safe against their owner.
 """
 
+import base64
 import fcntl
+import hashlib
 import json
 import os
 import re
 import sqlite3
 import stat
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
 from democratize_security import evidence_objects
 from democratize_security import objects as artifact_objects
 from democratize_security.contracts import _unique_pairs, digest, plan
-from democratize_security.runtime_auth import VerificationContext
+from democratize_security.runtime_auth import (
+    MAX_AUTH_BYTES,
+    AuthenticationError,
+    VerificationContext,
+    VerifierSession,
+)
 from democratize_security.runtime_events import MODE as RUNTIME_MODE
 from democratize_security.runtime_events import RuntimeLedgerError, reduce_runtime
 
@@ -406,6 +414,7 @@ class PlanStore:
             self._validate_runtime_objects(self.attempts())
             self.evidence_bindings()
             self.unreconciled_restore_fences()
+            self.runtime_results()
             self._allocate_generation()
         except BaseException:
             self.close()
@@ -1125,6 +1134,7 @@ class PlanStore:
         self.evidence_bindings()
         states = self.attempts()
         self._validate_runtime_objects(states)
+        self.runtime_results()
         fenced = bool(self.unreconciled_restore_fences())
         own = [s for s in states if s["campaign_id"] == campaign_id]
         held = sum(s["max_cost_cents"] for s in own if s["actual_cost_cents"] is None)
@@ -1266,6 +1276,163 @@ class PlanStore:
             db.execute("COMMIT")
             raise StoreError("Conflicting runtime event or receipt identity")
         return json.loads(duplicates[0][1])
+
+    def runtime_results(self) -> list[dict]:
+        """Admitted results, revalidated against their event, attempt and envelope bytes."""
+        db = self._connection()
+        states = {s["attempt_id"]: s for s in self.attempts()}
+        results = []
+        seen = set()
+        for event_id, attempt_id, revision, encoded in db.execute(
+            "SELECT event_id, attempt_id, revision, record_json FROM runtime_results "
+            "ORDER BY event_id"
+        ).fetchall():
+            try:
+                record = json.loads(encoded, object_pairs_hook=_unique_pairs)
+                raw = base64.b64decode(record["envelope_base64"], validate=True)
+                observation = record["observation"]
+                state = states[attempt_id]
+                event = db.execute(
+                    "SELECT event_id, request_json FROM attempt_events "
+                    "WHERE attempt_id = ? AND revision = ?",
+                    (attempt_id, revision),
+                ).fetchone()
+                request = json.loads(event[1])
+                if (
+                    encoded != _json(record)
+                    or set(record)
+                    != {
+                        "schema_version",
+                        "kind",
+                        "event_id",
+                        "attempt_id",
+                        "observation",
+                        "envelope_base64",
+                        "coverage",
+                        "outcome",
+                    }
+                    or record["schema_version"] != 1
+                    or record["kind"] != "runtime_result"
+                    or (record["event_id"], record["attempt_id"]) != (event_id, attempt_id)
+                    or event[0] != event_id
+                    or request.get("action") != "admit"
+                    or request.get("result_sha256") != digest(record)
+                    or state.get("result_sha256") != digest(record)
+                    or observation["envelope_sha256"] != hashlib.sha256(raw).hexdigest()
+                    or observation["context"]["attempt_id"] != attempt_id
+                    or observation["report"]["coverage"] != record["coverage"]
+                    or observation["report"]["outcome"] != record["outcome"]
+                    or request.get("coverage") != record["coverage"]
+                ):
+                    raise StoreError("Runtime result does not match its event or envelope")
+            except (KeyError, TypeError, ValueError) as error:
+                raise StoreError(f"Invalid runtime result: {error}") from error
+            seen.add(attempt_id)
+            results.append(record)
+        if any(s.get("result_sha256") and a not in seen for a, s in states.items()):
+            raise StoreError("Admitted attempt is missing its runtime result")
+        return results
+
+    def admit_result(
+        self,
+        event_id: str,
+        attempt_id: str,
+        expected_revision: int,
+        session: VerifierSession,
+        raw: bytes,
+    ) -> dict:
+        """Authenticate a verifier report with its live session and admit it atomically.
+
+        The expected context is rebuilt from validated store state and the current
+        controller generation; the session must carry the exact committed challenge.
+        A complete report completes the attempt with its outcome (pass or fail); a
+        partial one interrupts it as incomplete and keeps the cost hold. The result
+        row, event and attempt state commit together or not at all.
+        """
+        _identifier(event_id)
+        if not isinstance(session, VerifierSession):
+            raise StoreError("A live verifier session is required")
+        if not isinstance(raw, bytes) or not 0 < len(raw) <= MAX_AUTH_BYTES:
+            raise StoreError("Verifier envelope must be bounded bytes")
+        db = self._begin_write()
+        try:
+            states = self.attempts()
+            self._validate_runtime_objects(states)
+            existing = [r for r in self.runtime_results() if r["event_id"] == event_id]
+            if existing:
+                (record,) = existing
+                if (
+                    record["attempt_id"] != attempt_id
+                    or record["observation"]["envelope_sha256"] != hashlib.sha256(raw).hexdigest()
+                ):
+                    db.execute(
+                        "INSERT OR IGNORE INTO accounting_stops VALUES (?, 'conflicting_identity')",
+                        (event_id,),
+                    )
+                    db.execute("COMMIT")
+                    raise StoreError("Conflicting runtime result identity")
+                db.execute("COMMIT")
+                return record
+            if db.execute(
+                "SELECT 1 FROM attempt_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                db.execute(
+                    "INSERT OR IGNORE INTO accounting_stops VALUES (?, 'conflicting_identity')",
+                    (event_id,),
+                )
+                db.execute("COMMIT")
+                raise StoreError("Conflicting runtime result identity")
+            state = next((s for s in states if s["attempt_id"] == attempt_id), None)
+            if (
+                state is None
+                or state.get("mode") != RUNTIME_MODE
+                or state["phase"] != "verifying"
+                or state["revision"] != expected_revision
+            ):
+                raise StoreError("Admission requires a verifying attempt at the expected revision")
+            challenge = session.public_challenge()
+            expected = self.runtime_context(
+                attempt_id, state["verification_request_id"], expected_revision=state["revision"]
+            )
+            if challenge["challenge_sha256"] != state["challenge_sha256"] or challenge[
+                "context"
+            ] != asdict(expected):
+                raise StoreError("Session does not hold this attempt's committed challenge")
+            try:
+                observation = session.authenticate(raw)
+            except AuthenticationError as error:
+                raise StoreError(f"Verifier report rejected: {error}") from error
+            report = observation.report
+            record = {
+                "schema_version": 1,
+                "kind": "runtime_result",
+                "event_id": event_id,
+                "attempt_id": attempt_id,
+                "observation": observation.public_record(),
+                "envelope_base64": base64.b64encode(raw).decode(),
+                "coverage": report["coverage"],
+                "outcome": report["outcome"],
+            }
+            request = {
+                "mode": RUNTIME_MODE,
+                "action": "admit",
+                "attempt_id": attempt_id,
+                "expected_revision": expected_revision,
+                "result_sha256": digest(record),
+                "coverage": report["coverage"],
+            }
+            result = reduce_runtime(state, request, admission=True)
+            self._commit_attempt_event(db, event_id, state, request, result)
+            db.execute(
+                "INSERT INTO runtime_results VALUES (?, ?, ?, ?)",
+                (event_id, attempt_id, result["revision"], _json(record)),
+            )
+            db.execute("COMMIT")
+            return json.loads(_json(record))
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
 
     def record_runtime(self, event_id: str, request: dict) -> dict:
         """Fenced runtime transition in the shared attempt ledger (store v7).
