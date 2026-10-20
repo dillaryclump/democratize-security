@@ -149,6 +149,50 @@ mount reconciliation are not implemented here; this is not runtime M3 recovery.
 Use a new reviewed checkout/host configuration for another full run; current
 Harbor scripts already refuse reused output directories.
 
+## Dedicated WSL2 distro on Windows
+
+Dillon selected a separate WSL2 distro as the first dedicated worker. Create it
+from the official image, never by exporting a personal distro:
+
+```powershell
+wsl --install Ubuntu-24.04 --name ds-worker --location <dedicated directory> --no-launch
+```
+
+As root, create a non-root `controller` user (uid outside 999/10001/20001),
+install [`infra/worker/wsl.conf`](../infra/worker/wsl.conf) as `/etc/wsl.conf`,
+then `wsl --terminate ds-worker`. Confirm that no `drvfs`/`9p` Windows drive is
+mounted, that `/proc/sys/fs/binfmt_misc/WSLInterop` is absent and that `PATH` has
+no Windows entries. Install Engine, Compose and helper prerequisites as above, and
+uv 0.12.23 for the controller.
+
+Transfer the source through stdin; the worker has no Windows drive to read from.
+On Windows, Git's `core.autocrlf=true` also rewrites `git archive` output, so
+create the archive with `git -c core.autocrlf=false archive`. Compare SHA-256 on
+both sides, then extract as the controller into a fresh `/srv/democratize-security`.
+
+Platform constraints, recorded rather than assumed away:
+
+- **Kernel.** All WSL2 distros share one utility-VM kernel. Harbor's Docker
+  environment rejects `no-network` tasks unless the engine kernel has
+  `CONFIG_NFT_FIB_INET`, which the stock WSL kernel lacks. Build Microsoft's
+  matching `WSL2-Linux-Kernel` tag with `NFT_FIB`, `NFT_FIB_IPV4`, `NFT_FIB_IPV6`
+  and `NFT_FIB_INET` enabled, plus its modules VHDX, and set `kernel=` and
+  `kernelModules=` in `.wslconfig`. Containers still share that host kernel.
+- **One Docker daemon.** WSL2 distros share a network namespace, so two Docker
+  Engines would contend for bridges and nftables rules. Run Engine only in the
+  worker during a worker run, and stop other distros' daemons first. Do not use
+  Docker Desktop's WSL integration: its bridge gateway is in another namespace,
+  so the audit's egress positive control can never reach the host listener and
+  every audit stays `incomplete`.
+- **Shared WSL plumbing.** The distro still sees WSL's shared `/mnt/wsl` tmpfs,
+  read-only GPU driver files and WSLg sockets. Candidates do not: they run in
+  Docker containers that mount none of these.
+- **Idle stop acts as a reboot.** WSL stops a distro once no session process
+  remains, which drops every loop mount. The helper does not reconcile after a
+  reboot, so run trials, audits, archive and release in one session with
+  [`infra/worker/regressions.sh`](../infra/worker/regressions.sh), launched
+  detached (for example with `setsid nohup`) so the run itself keeps the distro alive.
+
 ## Optional Apple Silicon VM configuration
 
 `infra/worker/lima.yaml` is an optional 2 CPU / 3 GiB RAM / 16 GiB disk VZ
