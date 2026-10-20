@@ -63,6 +63,15 @@ distro (no bounded job storage, so the audit also reports
   `network: none` and all capabilities dropped. Built candidate image
   `sha256:d113ab72a22fd35f5ba895c7ac7ca6e530f0c534d806d8a0a828bfad2ba74507`.
 
+Dedicated worker run, 2026-10-20, source `1561d26` (`git archive` SHA-256
+`3bc375d8...0f3a`), with `DS_WORKER_HOST_REQUIRED=1`: all three controls
+accepted with the same outcomes; all three audits passed with complete coverage
+and `own_filesystem: true` at 58,675,200 bytes, leaving only the two documented
+verifier gaps; all three jobs were archived and released in the same session.
+Built candidate image
+`sha256:483b5f607bf5d45043ac5a764cbc8ec1c47a26ce2cfff628c118b07a68bc9030`.
+Full suite on that head: 1082 passed with PostgreSQL, Docker and Harbor tests required.
+
 ## Limitations
 
 - tmux is installed from the Debian archive at image build time, so the built
