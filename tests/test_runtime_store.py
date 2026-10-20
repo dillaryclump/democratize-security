@@ -1,5 +1,6 @@
 """Store v7 runtime lifecycle in the shared attempt ledger (issue #62)."""
 
+import dataclasses
 import fcntl
 import json
 import sqlite3
@@ -10,6 +11,7 @@ import pytest
 
 from democratize_security import artifacts, backup, objects
 from democratize_security.contracts import digest
+from democratize_security.recovery import RecoveryError, RecoveryObservation, recovery_decision
 from democratize_security.runtime_auth import VerifierSession
 from democratize_security.store import V6_SCHEMA, VERSION, PlanStore, StoreError
 
@@ -444,3 +446,107 @@ def test_new_tables_are_immutable(case, table, operation):
         )
         with pytest.raises(sqlite3.IntegrityError, match="immutable runtime record"):
             db.execute(statement)
+
+
+def observe(state, **fields):
+    return RecoveryObservation(
+        trial_id=state.trial_id,
+        attempt_id=state.attempt_id,
+        generation=state.generation,
+        revision=state.revision,
+        runner_request_id=state.runner_request_id,
+        verification_request_id=state.verification_request_id,
+        **fields,
+    )
+
+
+def test_recovery_state_matches_each_runtime_phase(case):
+    expected = [
+        ("prep", prepare(case), "preparing", "none", "review_preparation"),
+        ("dispatch", DISPATCH, "dispatch_pending", "none", "reconcile_runner"),
+        ("ack", ACK, "running", "none", "reconcile_runner"),
+        ("seal", seal(case), "sealed", "referenced", "reconcile_runner"),
+    ]
+    with open_store(case) as store:
+        generation = store.controller_generation
+        for event_id, request, phase, stage, action in expected:
+            stored = store.record_runtime(event_id, request)
+            state = store.recovery_state("r1")
+            assert (state.phase, state.revision, state.artifact_stage) == (
+                phase,
+                stored["revision"],
+                stage,
+            )
+            assert (state.generation, state.integrity_ok) == (generation, True)
+            assert (state.runner_request_id, state.worker_id) == (
+                stored["runner_request_id"],
+                stored["worker_id"],
+            )
+            decision = recovery_decision(state, observe(state))
+            assert decision.action == action
+            assert (decision.held_cents, decision.settled_cents) == (state.max_cost_cents, None)
+            assert (decision.execution_enabled, decision.dispatch_blocked) == (False, True)
+        _, request = verify_request(store)
+        store.record_runtime("verify", request)
+        state = store.recovery_state("r1")
+        assert (state.phase, state.verification_request_id) == ("verifying", "verify-1")
+        stopped = observe(state, worker_id="worker-1", runner_status="stopped")
+        assert recovery_decision(state, stopped).action == "revalidate_artifact"
+        valid = observe(
+            state, worker_id="worker-1", runner_status="stopped", artifact_status="valid"
+        )
+        assert recovery_decision(state, valid).action == "reconcile_verifier"
+        store.record_runtime("stop", runtime("interrupt", 5, reason="operator stop"))
+        store.record_runtime(
+            "settle", runtime("settle", 6, actual_cost_cents=0, receipt_id="receipt-1")
+        )
+        state = store.recovery_state("r1")
+        assert (state.phase, state.actual_cost_cents) == ("interrupted", 0)
+        decision = recovery_decision(state, observe(state, artifact_status="valid"))
+        assert (decision.action, decision.held_cents, decision.settled_cents) == (
+            "inspect_terminal",
+            0,
+            0,
+        )
+
+
+def test_lost_acknowledgement_never_advises_resubmission(case):
+    with open_store(case) as store:
+        store.record_runtime("prep", prepare(case))
+        store.record_runtime("dispatch", DISPATCH)
+        first = store.controller_generation
+    # A restarted controller sees only the durable dispatch intent.
+    with open_store(case) as store:
+        state = store.recovery_state("r1")
+        assert state.generation > first
+        assert (state.phase, state.worker_id) == ("dispatch_pending", None)
+        for status in ("unknown", "not_found"):
+            decision = recovery_decision(state, observe(state, runner_status=status))
+            assert decision.action == "reconcile_runner"
+            assert (decision.execution_enabled, decision.dispatch_blocked) == (False, True)
+        with pytest.raises(RecoveryError, match="generation"):
+            recovery_decision(state, observe(dataclasses.replace(state, generation=first)))
+        store.record_runtime("rec", runtime("reconcile", 2, reason="acknowledgement lost"))
+        state = store.recovery_state("r1")
+        assert (state.phase, state.previous_phase) == ("reconciling", "dispatch_pending")
+        decision = recovery_decision(state, observe(state, runner_status="not_found"))
+        assert decision.action == "reconcile_runner"
+        # The ledger itself refuses a second submission for this attempt.
+        with pytest.raises(StoreError):
+            store.record_runtime(
+                "dispatch-again", dict(DISPATCH, expected_revision=3, runner_request_id="run-2")
+            )
+
+
+def test_recovery_state_requires_valid_known_runtime_attempt(case):
+    with open_store(case) as store:
+        with pytest.raises(StoreError, match="Unknown runtime attempt"):
+            store.recovery_state("r1")
+        to_sealed(case, store)
+        assert store.recovery_state("r1").integrity_ok is True
+        # Changed bytes under an open store are an error, never integrity_ok=False.
+        (path,) = case["artifact_dir"].iterdir()
+        path.chmod(0o600)
+        path.write_bytes(path.read_bytes() + b" ")
+        with pytest.raises(StoreError, match="missing or changed"):
+            store.recovery_state("r1")

@@ -19,6 +19,7 @@ from pathlib import Path
 from democratize_security import evidence_objects
 from democratize_security import objects as artifact_objects
 from democratize_security.contracts import _unique_pairs, digest, plan
+from democratize_security.recovery import RecoveryError, RecoveryState
 from democratize_security.runtime_auth import (
     MAX_AUTH_BYTES,
     AuthenticationError,
@@ -1203,6 +1204,39 @@ class PlanStore:
                     artifact_objects.read_artifact(self._objects_directory, state["artifact_ref"])
                 except (OSError, ValueError) as error:
                     raise StoreError(f"Runtime artifact is missing or changed: {error}") from error
+
+    def recovery_state(self, attempt_id: str) -> RecoveryState:
+        """Project one fully validated runtime attempt for pure recovery advice.
+
+        Every attempt is replayed and every sealed artifact re-read first; integrity
+        errors propagate, so a returned projection always has `integrity_ok=True`.
+        `generation` is this inspecting controller, never the attempt's original one,
+        so observations must be gathered fresh under the current ownership.
+        """
+        _identifier(attempt_id)
+        states = self.attempts()
+        self._validate_runtime_objects(states)
+        matches = [s for s in states if s["attempt_id"] == attempt_id]
+        if not matches or matches[0].get("mode") != RUNTIME_MODE:
+            raise StoreError("Unknown runtime attempt")
+        state = matches[0]
+        try:
+            return RecoveryState(
+                trial_id=state["trial_id"],
+                attempt_id=attempt_id,
+                generation=self.controller_generation,
+                revision=state["revision"],
+                phase=state["phase"],
+                max_cost_cents=state["max_cost_cents"],
+                actual_cost_cents=state["actual_cost_cents"],
+                runner_request_id=state["runner_request_id"],
+                worker_id=state["worker_id"],
+                verification_request_id=state["verification_request_id"],
+                artifact_stage="none" if state["artifact_ref"] is None else "referenced",
+                previous_phase=state["previous_phase"],
+            )
+        except RecoveryError as error:
+            raise StoreError(f"Runtime attempt cannot be projected: {error}") from error
 
     def runtime_context(
         self, attempt_id: str, verification_request_id: str, *, expected_revision: int

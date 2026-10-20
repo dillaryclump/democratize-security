@@ -62,6 +62,15 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
   gate. See [BACKUP.md](BACKUP.md). Combined v6/auth/backup local verification:
   961 passed, no skips, on Python 3.12.13 with real PostgreSQL and all seven
   Docker worker cases; locked sync, Ruff lint/format and package build passed.
+- On #62: store v7 records runtime attempts (prepare, dispatch intent,
+  acknowledgement, seal, verify intent, reconcile/resolve, interrupt, settle) in
+  the shared fenced ledger. `admit_result` authenticates a verifier envelope with
+  its live session and commits the result atomically; incomplete coverage
+  interrupts and keeps the hold. Restores carry a durable fence that blocks
+  preparation and dispatch until explicitly reconciled; backups are v7-only.
+  `recovery_state` projects validated attempts onto recovery advice. No runner,
+  dispatcher or provider is connected. See [PERSISTENCE.md](PERSISTENCE.md) and
+  ADR 0007.
 - On #48: a pure recovery decision function covers synthetic crash observations,
   rejects stale/foreign context and preserves uncertain cost holds. It emits
   inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
@@ -91,22 +100,23 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 ## Next bounded work
 
-1. Review/integrate #53 controller-generation ownership and fencing. Connect
-   validated store projections to recovery decisions in a separate slice.
-   Ambiguous request outcomes must retain holds and never emit resubmission.
-2. Integrate the merged per-request authentication contract with a trusted runtime
-   boundary and accepted-result lifecycle. Persisted intent, hashes and report
-   consistency alone cannot prove a trusted verifier executed. Do not manufacture accepted
-   results from the current offline evidence APIs.
+1. Connect a runner adapter to the v7 lifecycle: persist dispatch intent before
+   submission, authenticate worker/stop observations, launch the pinned verifier
+   with the private nonce and admit only through `admit_result`. Ambiguous
+   request outcomes must retain holds and never emit resubmission.
+2. Build the remaining pilot conditions and task families on the conformant
+   Terminus2 transport (#63). Do not manufacture accepted results from the
+   offline evidence APIs.
 3. Only after persistence/recovery review and M0/M2 acceptance, connect the runner
    on a dedicated bounded worker. Model execution additionally needs an explicitly
    approved finite budget. No paid pilot or optimizer is authorized by this ledger.
 
 ## Remaining gates and limitations
 
-M3 remains partial: no live recovery engine, production dispatcher, authenticated
-accepted-result registry, runtime restore fence, protected final evaluator, paid
-pilot, demonstrated benchmark improvement or GEPA search exists.
+M3 remains partial: no live recovery engine, production dispatcher, runner
+integration, protected final evaluator, paid pilot, demonstrated benchmark
+improvement or GEPA search exists. The v7 ledger's admission and restore fence
+are local process-level guarantees only.
 
 Issue #50: PR #49's CI run 39043199834 failed one `harbor-apps` audit. In the
 `sparse` control, a collector exec carried an earlier timestamp than the agent's

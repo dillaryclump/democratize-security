@@ -58,7 +58,11 @@ only to the separate verifier and use this contract to authenticate its result.
 The store must admit that observation and the exact evidence references together
 with its event/revision/result in one fenced transaction. A deserialized public
 record or a directly constructed Python dataclass is not admission authority.
-This contract does not implement those boundaries or change store v5.
+Store v7 (#62) implements that admission: `PlanStore.admit_result` rebuilds the
+context from validated state, requires the session holding the committed
+challenge and commits the authenticated result atomically (see
+[PERSISTENCE.md](PERSISTENCE.md)). The launcher, worker observation
+authentication and verifier pinning remain unimplemented.
 
 Existing offline evidence and Harbor control envelopes retain their formats and
 limits. A future adapter must explicitly bridge the reviewed verifier into this

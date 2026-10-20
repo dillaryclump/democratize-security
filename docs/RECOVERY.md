@@ -6,10 +6,12 @@ advice from frozen, validated Python records. It performs no I/O and changes no
 ledger, phase, reservation, file or external worker. Its output always has
 `execution_enabled=False` and `dispatch_blocked=True`.
 
-This is a standalone policy model with synthetic inputs. It is not wired to
-PlanStore or Harbor. Store v5 still supports only preparing/interrupted accounting;
-the additional runtime phases here model the proposed contract. These dataclasses
-are not a new persisted schema or a JSON import API. No result acceptance exists.
+The policy itself is pure. Store v7 (#62) adds `PlanStore.recovery_state`, which
+projects a fully validated runtime attempt onto `RecoveryState` under the current
+controller generation; integrity failures raise rather than producing
+`integrity_ok=False`. It is not wired to Harbor or any runner. These dataclasses
+are not a persisted schema or a JSON import API, and advice never transitions,
+dispatches or resubmits.
 
 ## Input boundary
 
@@ -88,9 +90,9 @@ removed. A cross-product test
 varies worker status, deadline expiry, artifact validity and evidence coverage,
 checking that no combination releases an unknown-cost hold or enables dispatch.
 
-Next: persist monotonically increasing controller generations under the existing
-exclusive lock, test crash/reopen and stale writes, and define how validated store
-projections feed this policy. Trusted runtime authentication and accepted-result
-transactions are separate prerequisites before advice can become transitions.
+Controller generations (#53) and the v7 projection (#62) are implemented;
+`tests/test_runtime_store.py` feeds `recovery_state` through each runtime phase
+and a lost acknowledgement. Observations are still caller-supplied: a runner
+integration must authenticate them before advice can become transitions.
 M0/M2 owner acceptance, dedicated worker bounds and finite model budget still gate
 live execution.
