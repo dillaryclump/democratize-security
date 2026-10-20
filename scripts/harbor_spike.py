@@ -29,6 +29,32 @@ def evidence_mac(nonce, evidence):
 
 def run_trial(task, agent, jobs_dir, job_name):
     """Run one finite, retry-free trial; return the nonce only its verifier saw."""
+    storage = os.environ.get("DS_WORKER_HOST_REQUIRED", "0")
+    if storage not in {"0", "1"}:
+        raise ValueError("DS_WORKER_HOST_REQUIRED must be 0 or 1")
+    if storage == "1":
+        # Installed root-owned host helper; never candidate code or a shell.
+        # Keep mounted through acceptance/audits. Explicit archive/release follows
+        # Docker teardown; a failed preparation must never fall back unbounded.
+        subprocess.run(
+            [
+                "sudo",
+                "-n",
+                "/usr/local/libexec/ds-worker-host",
+                "prepare",
+                str(jobs_dir),
+                job_name,
+            ],
+            check=True,
+            timeout=60,
+        )
+        job = jobs_dir / job_name
+        capacity = os.statvfs(job)
+        if (
+            not os.path.ismount(job)
+            or not 0 < capacity.f_blocks * capacity.f_frsize <= 64 * 1024 * 1024
+        ):
+            raise ValueError("required worker job filesystem was not observed within 64 MiB")
     nonce = secrets.token_hex(32)
     subprocess.run(
         ["harbor", "run", "-p", str(task), "-a", agent, "-n", "1", "-k", "1", "-r", "0"]
