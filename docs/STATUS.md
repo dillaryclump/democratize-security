@@ -21,6 +21,10 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
   with complete accounting of eight checks and deliberate unsafe controls.
 - Harbor 0.24.0 model-free policy and three application tasks, separate candidate
   containers, nonce-bound evidence, trusted submission collection and sealed replay.
+- Model-free Terminus2 transport conformance (#63): a fixed scripted backend
+  drives Terminus2's real parser, tmux loop and completion confirmation through
+  the audited invoice-read boundary; no model or provider. See
+  [TERMINUS_CONFORMANCE.md](TERMINUS_CONFORMANCE.md).
 - Host rejection of forced unfiltered `/logs/artifacts` fallback copies. Audit v5
   bounds container storage: submissions, tmpfs, shared memory and logs. Each app
   has twelve reviewed control/replay trials. See [APPLICATION_TASKS.md](APPLICATION_TASKS.md).
