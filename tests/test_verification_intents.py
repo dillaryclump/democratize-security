@@ -164,6 +164,7 @@ def test_missing_artifact_blocks_pending_intent(pending):
 def make_v4(case, *, legacy_evidence=True):
     assert digest(V4_SCHEMA) == "faaea6fd6f6ac9e0770d71bdbfbfa5ccb9b9dc2952b9847752709b77792cd9d2"
     with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE controller_generations")
         db.execute("DROP TABLE verification_intents")
         db.execute("PRAGMA user_version=4")
         if legacy_evidence:
@@ -203,7 +204,9 @@ def test_v4_migration_preserves_legacy_evidence_without_fabricating_intent(pendi
     with open_store(pending, migrate=True) as store:
         assert store._db.execute("PRAGMA user_version").fetchone()[0] == VERSION
         assert [
-            line for line in store._db.iterdump() if "verification_intents" not in line
+            line
+            for line in store._db.iterdump()
+            if "verification_intents" not in line and "controller_generations" not in line
         ] == before
         assert store.verification_intents() == []
         legacy = store.evidence_bindings()[0]
@@ -286,13 +289,15 @@ from pathlib import Path
 from democratize_security.store import PlanStore
 original = sqlite3.connect
 class Connection(sqlite3.Connection):
+    armed = sys.argv[4] in ('migrate', 'migration')
     def execute(self, sql, *args):
-        if sql == 'COMMIT' and sys.argv[5] == 'before':
+        if self.armed and sql == 'COMMIT' and sys.argv[5] == 'before':
             os._exit(71)
         return super().execute(sql, *args)
 sqlite3.connect = lambda *a, **kw: original(*a, factory=Connection, **kw)
 store = PlanStore(Path(sys.argv[1]), objects_directory=Path(sys.argv[2]),
     evidence_directory=Path(sys.argv[3]), migrate=sys.argv[4] == 'migration')
+store._db.armed = True
 if sys.argv[4] == 'intent':
     store.record_verification_intent('intent', json.loads(sys.argv[6]))
 os._exit(72)
