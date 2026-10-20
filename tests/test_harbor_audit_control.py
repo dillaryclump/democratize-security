@@ -97,10 +97,12 @@ def test_committed_oracle_solution_is_executable_by_the_unprivileged_agent():
     import subprocess
 
     path = "tasks/harbor/rls-policy/solution/solve.sh"
-    staged = subprocess.run(
-        ["git", "ls-files", "-s", path], capture_output=True, text=True, check=True, cwd=ROOT
-    ).stdout
-    assert staged.startswith("100755 ")
+    if (ROOT / ".git").exists():
+        staged = subprocess.run(
+            ["git", "ls-files", "-s", path], capture_output=True, text=True, check=True, cwd=ROOT
+        ).stdout
+        assert staged.startswith("100755 ")
+    # A dedicated worker runs a `git archive` copy, which keeps the committed mode.
     assert (ROOT / path).stat().st_mode & 0o005 == 0o005
 
 

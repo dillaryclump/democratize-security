@@ -29,6 +29,16 @@ def task(name):
     return ROOT / "tasks/harbor" / name
 
 
+def committed_executable(path):
+    """Git's index in a checkout; a dedicated worker's `git archive` copy keeps that mode."""
+    if not (ROOT / ".git").exists():
+        return (ROOT / path).stat().st_mode & 0o111 == 0o111
+    staged = subprocess.run(
+        ["git", "ls-files", "-s", path], capture_output=True, text=True, check=True, cwd=ROOT
+    ).stdout
+    return staged.startswith("100755 ")
+
+
 def files(directory):
     return sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file())
 
@@ -156,10 +166,7 @@ def test_solutions_are_executable_by_the_unprivileged_agent():
     # root cannot chmod it; the committed mode must already allow execution.
     for name in TASKS:
         path = f"tasks/harbor/{name}/solution/solve.sh"
-        staged = subprocess.run(
-            ["git", "ls-files", "-s", path], capture_output=True, text=True, check=True, cwd=ROOT
-        ).stdout
-        assert staged.startswith("100755 "), path
+        assert committed_executable(path), path
 
 
 def test_app_image_holds_no_verifier_code():
