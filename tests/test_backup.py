@@ -709,6 +709,9 @@ def test_v5_source_and_archive_require_explicit_migration_not_implicit_relabelin
     database = snapshot / "ledger/ledger.sqlite3"
     for path in (case["ledger"] / "ledger.sqlite3", database):
         with sqlite3.connect(path) as db:
+            db.execute("DROP TABLE runtime_results")
+            db.execute("DROP TABLE restore_reconciliations")
+            db.execute("DROP TABLE restore_fences")
             db.execute("DROP TABLE controller_generations")
             db.execute("PRAGMA user_version=5")
 

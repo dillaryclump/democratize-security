@@ -16,8 +16,11 @@ from pathlib import Path
 from democratize_security import evidence_objects
 from democratize_security import objects as artifact_objects
 from democratize_security.contracts import _unique_pairs, digest, plan
+from democratize_security.runtime_auth import VerificationContext
+from democratize_security.runtime_events import MODE as RUNTIME_MODE
+from democratize_security.runtime_events import RuntimeLedgerError, reduce_runtime
 
-VERSION = 6
+VERSION = 7
 APPLICATION_ID = 0x44534C31
 MAX_PLAN_BYTES = 16 * 1024 * 1024
 SCHEMA = {
@@ -153,6 +156,38 @@ for _operation in ("UPDATE", "DELETE"):
     )
 
 
+V6_SCHEMA = dict(SCHEMA)
+SCHEMA.update(
+    {
+        "runtime_results": """CREATE TABLE runtime_results (
+            event_id TEXT PRIMARY KEY NOT NULL,
+            attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(attempt_id),
+            revision INTEGER NOT NULL,
+            record_json TEXT NOT NULL,
+            FOREIGN KEY (attempt_id, revision) REFERENCES attempt_events(attempt_id, revision)
+        )""",
+        "restore_fences": """CREATE TABLE restore_fences (
+            fence_id TEXT PRIMARY KEY NOT NULL,
+            created_at TEXT NOT NULL,
+            record_json TEXT NOT NULL
+        )""",
+        "restore_reconciliations": """CREATE TABLE restore_reconciliations (
+            event_id TEXT PRIMARY KEY NOT NULL,
+            fence_id TEXT NOT NULL UNIQUE REFERENCES restore_fences(fence_id),
+            created_at TEXT NOT NULL,
+            record_json TEXT NOT NULL
+        )""",
+    }
+)
+for _table in ("runtime_results", "restore_fences", "restore_reconciliations"):
+    for _operation in ("UPDATE", "DELETE"):
+        _name = f"{_table}_no_{_operation.lower()}"
+        SCHEMA[_name] = (
+            f"CREATE TRIGGER {_name} BEFORE {_operation} ON {_table} "
+            "BEGIN SELECT RAISE(ABORT, 'immutable runtime record'); END"
+        )
+
+
 class StoreError(ValueError):
     """The ledger cannot be safely used."""
 
@@ -175,10 +210,22 @@ def _amount(value):
         raise StoreError("Cost must be a bounded nonnegative integer number of cents")
 
 
+def _replay(previous: dict | None, request: dict) -> dict:
+    """Replay one stored event with the reducer for its attempt's single mode."""
+    runtime = isinstance(request, dict) and request.get("mode") == RUNTIME_MODE
+    if previous is not None and (previous.get("mode") == RUNTIME_MODE) != runtime:
+        raise StoreError("Attempt history mixes offline and runtime events")
+    if runtime:
+        return reduce_runtime(previous, request, admission=request.get("action") == "admit")
+    return _reduce(previous, request)
+
+
 def _reduce(previous: dict | None, request: dict) -> dict:
     """Pure offline accounting transitions; deliberately no dispatch or success state."""
     if not isinstance(request, dict):
         raise StoreError("Expected an accounting request object")
+    if "mode" in request or (previous is not None and "mode" in previous):
+        raise StoreError("Offline accounting cannot act on a runtime attempt")
     action = request.get("action")
     fields = {
         "prepare": {"campaign_id", "trial_id", "max_cost_cents", "basis_sha256"},
@@ -285,14 +332,19 @@ class PlanStore:
             application = self._db.execute("PRAGMA application_id").fetchone()[0]
             objects = self._schema()
             fresh = version == 0 and application == 0 and not objects
-            legacy = version in (1, 2, 3, 4, 5) and application == APPLICATION_ID
-            old_schema = {1: V1_SCHEMA, 2: V2_SCHEMA, 3: V3_SCHEMA, 4: V4_SCHEMA, 5: V5_SCHEMA}.get(
-                version, SCHEMA
-            )
+            legacy = version in (1, 2, 3, 4, 5, 6) and application == APPLICATION_ID
+            old_schema = {
+                1: V1_SCHEMA,
+                2: V2_SCHEMA,
+                3: V3_SCHEMA,
+                4: V4_SCHEMA,
+                5: V5_SCHEMA,
+                6: V6_SCHEMA,
+            }.get(version, SCHEMA)
             if legacy and not migrate:
                 raise StoreError(f"Version {version} requires explicit migrate=True")
             if not fresh and (
-                version not in (1, 2, 3, 4, 5, VERSION) or application != APPLICATION_ID
+                version not in (1, 2, 3, 4, 5, 6, VERSION) or application != APPLICATION_ID
             ):
                 raise StoreError("Unknown ledger version or application; no automatic migration")
             if not fresh and objects != old_schema:
@@ -335,8 +387,10 @@ class PlanStore:
                 self.artifact_bindings()  # Validate old objects before migration commits.
             if legacy and version == 4:
                 self._read_evidence_bindings([])  # Do not invent intents for v4 observations.
-            if legacy and version == 5:
-                self.evidence_bindings()  # Validate v5 intents and evidence before migration.
+            if legacy and version in (5, 6):
+                self.evidence_bindings()  # Validate intents and evidence before migration.
+            if legacy and version == 6:
+                self._generation_tip()  # Validate ownership history before migration.
             if legacy:
                 self._db.execute("BEGIN IMMEDIATE")
                 try:
@@ -349,8 +403,9 @@ class PlanStore:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
-            self.attempts()
+            self._validate_runtime_objects(self.attempts())
             self.evidence_bindings()
+            self.unreconciled_restore_fences()
             self._allocate_generation()
         except BaseException:
             self.close()
@@ -542,7 +597,7 @@ class PlanStore:
                     if datetime.fromisoformat(timestamp).utcoffset() != UTC.utcoffset(None):
                         raise StoreError("Event timestamp must be UTC")
                     request = json.loads(request_json, object_pairs_hook=_unique_pairs)
-                    previous = _reduce(previous, request)
+                    previous = _replay(previous, request)
                     if (
                         request_json != _json(request)
                         or state_json != _json(previous)
@@ -599,6 +654,8 @@ class PlanStore:
         if row is None:
             raise StoreError("Unknown artifact binding attempt/revision")
         state = json.loads(row[0], object_pairs_hook=_unique_pairs)
+        if state.get("mode") == RUNTIME_MODE:
+            raise StoreError("Offline artifact binding cannot act on a runtime attempt")
         if state["phase"] != "preparing" or any(
             state[key] != request[key] for key in ("attempt_id", "campaign_id", "trial_id")
         ):
@@ -1067,6 +1124,8 @@ class PlanStore:
         planned = self.snapshot(campaign_id)
         self.evidence_bindings()
         states = self.attempts()
+        self._validate_runtime_objects(states)
+        fenced = bool(self.unreconciled_restore_fences())
         own = [s for s in states if s["campaign_id"] == campaign_id]
         held = sum(s["max_cost_cents"] for s in own if s["actual_cost_cents"] is None)
         spent = sum(s["actual_cost_cents"] for s in own if s["actual_cost_cents"] is not None)
@@ -1082,11 +1141,208 @@ class PlanStore:
             "available_cents": limit - held - spent,
             "unknown_cost_count": sum(s["actual_cost_cents"] is None for s in own),
             "blocked": overrun
+            or fenced
             or bool(self._connection().execute("SELECT 1 FROM accounting_stops LIMIT 1").fetchone())
-            or any(s["phase"] == "preparing" or s["actual_cost_cents"] is None for s in states),
+            or any(
+                s["phase"] not in ("completed", "interrupted") or s["actual_cost_cents"] is None
+                for s in states
+            ),
             "overrun": overrun,
+            "restore_fenced": fenced,
             "execution_enabled": False,
         }
+
+    def unreconciled_restore_fences(self) -> list[str]:
+        """Restore fences without a reconciliation event; each blocks dispatch."""
+        db = self._connection()
+        fences = {}
+        for fence_id, created_at, encoded in db.execute(
+            "SELECT fence_id, created_at, record_json FROM restore_fences ORDER BY fence_id"
+        ).fetchall():
+            _identifier(fence_id)
+            record = json.loads(encoded, object_pairs_hook=_unique_pairs)
+            if (
+                encoded != _json(record)
+                or record.get("fence_id") != fence_id
+                or record.get("kind") != "restore_fence"
+                or datetime.fromisoformat(created_at).utcoffset() != UTC.utcoffset(None)
+            ):
+                raise StoreError("Invalid restore fence record")
+            fences[fence_id] = record
+        for event_id, fence_id, encoded in db.execute(
+            "SELECT event_id, fence_id, record_json FROM restore_reconciliations"
+        ).fetchall():
+            record = json.loads(encoded, object_pairs_hook=_unique_pairs)
+            if (
+                encoded != _json(record)
+                or record.get("event_id") != event_id
+                or record.get("fence_id") != fence_id
+                or fence_id not in fences
+            ):
+                raise StoreError("Invalid restore reconciliation record")
+            del fences[fence_id]
+        return sorted(fences)
+
+    def _validate_runtime_objects(self, states: list[dict]) -> None:
+        """Every sealed runtime artifact must still exist with its exact bytes."""
+        for state in states:
+            if state.get("mode") == RUNTIME_MODE and state["artifact_ref"] is not None:
+                if self._objects_directory is None:
+                    raise StoreError("Runtime artifacts require objects_directory")
+                try:
+                    artifact_objects.read_artifact(self._objects_directory, state["artifact_ref"])
+                except (OSError, ValueError) as error:
+                    raise StoreError(f"Runtime artifact is missing or changed: {error}") from error
+
+    def runtime_context(
+        self, attempt_id: str, verification_request_id: str, *, expected_revision: int
+    ) -> VerificationContext:
+        """Trusted verifier context derived only from validated store state."""
+        states = self.attempts()
+        self._validate_runtime_objects(states)
+        state = next((s for s in states if s["attempt_id"] == attempt_id), None)
+        if state is None or state.get("mode") != RUNTIME_MODE:
+            raise StoreError("Unknown runtime attempt")
+        if state["phase"] not in ("sealed", "verifying"):
+            raise StoreError("Verifier context requires a sealed attempt")
+        reference = state["artifact_ref"]
+        return VerificationContext(
+            campaign_id=state["campaign_id"],
+            trial_id=state["trial_id"],
+            attempt_id=attempt_id,
+            runner_request_id=state["runner_request_id"],
+            worker_id=state["worker_id"],
+            verification_request_id=verification_request_id,
+            controller_generation=self.controller_generation,
+            expected_revision=expected_revision,
+            task_revision=state["task_revision"],
+            artifact_binding_sha256=digest(reference),
+            artifact_sha256=reference["artifact_sha256"],
+            object_sha256=reference["object_sha256"],
+            verifier_sha256=state["verifier_sha256"],
+            protocol=state["protocol"],
+        )
+
+    def _commit_attempt_event(self, db, event_id, previous, request, result) -> None:
+        """Persist one transition: projection and immutable event, same transaction."""
+        if previous is None:
+            db.execute(
+                "INSERT INTO attempts VALUES (?, ?, ?, ?)",
+                (result["attempt_id"], result["trial_id"], result["campaign_id"], _json(result)),
+            )
+        else:
+            db.execute(
+                "UPDATE attempts SET state_json = ? WHERE attempt_id = ?",
+                (_json(result), result["attempt_id"]),
+            )
+        db.execute(
+            "INSERT INTO attempt_events VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                event_id,
+                result["attempt_id"],
+                result["revision"],
+                request.get("receipt_id"),
+                datetime.now(UTC).isoformat(),
+                _json(request),
+                _json(result),
+            ),
+        )
+
+    def _existing_event(self, db, event_id, request):
+        """Exact repeat -> stored state; any conflicting reuse -> durable integrity stop."""
+        encoded = _json(request)
+        duplicates = db.execute(
+            "SELECT request_json, state_json FROM attempt_events "
+            "WHERE event_id = ? OR receipt_id = ?",
+            (event_id, request.get("receipt_id")),
+        ).fetchall()
+        if not duplicates:
+            return None
+        if any(row[0] != encoded for row in duplicates):
+            db.execute(
+                "INSERT OR IGNORE INTO accounting_stops VALUES (?, 'conflicting_identity')",
+                (event_id,),
+            )
+            db.execute("COMMIT")
+            raise StoreError("Conflicting runtime event or receipt identity")
+        return json.loads(duplicates[0][1])
+
+    def record_runtime(self, event_id: str, request: dict) -> dict:
+        """Fenced runtime transition in the shared attempt ledger (store v7).
+
+        The caller must persist `dispatch_intent` before any external submission
+        and may never submit again for the same attempt. Admission of results uses
+        `admit_result`; this API cannot complete an attempt.
+        """
+        _identifier(event_id)
+        if not isinstance(request, dict) or request.get("mode") != RUNTIME_MODE:
+            raise StoreError("Expected a runtime request object")
+        if request.get("action") == "admit":
+            raise StoreError("Results enter only through authenticated admission")
+        encoded = _json(request)
+        if len(encoded.encode()) > 8192:
+            raise StoreError("Runtime request exceeds byte limit")
+        request = json.loads(encoded)
+        db = self._begin_write()
+        try:
+            states = self.attempts()
+            self._validate_runtime_objects(states)
+            existing = self._existing_event(db, event_id, request)
+            if existing is not None:
+                db.execute("COMMIT")
+                return existing
+            previous = next(
+                (s for s in states if s["attempt_id"] == request.get("attempt_id")), None
+            )
+            try:
+                result = reduce_runtime(previous, request)
+            except RuntimeLedgerError as error:
+                raise StoreError(str(error)) from error
+            action = request["action"]
+            if action == "prepare":
+                budget = self.budget_snapshot(result["campaign_id"])
+                if budget["blocked"]:
+                    raise StoreError(
+                        "Unresolved attempt, cost, stop or restore fence blocks preparation"
+                    )
+                if result["max_cost_cents"] > budget["available_cents"]:
+                    raise StoreError("Insufficient unreserved budget")
+                planned = self.snapshot(result["campaign_id"])
+                trial = next(
+                    (t for t in planned["trials"] if t["trial_id"] == result["trial_id"]), None
+                )
+                if trial is None or trial["task_revision"] != result["task_revision"]:
+                    raise StoreError("Runtime attempt does not match a planned trial revision")
+            elif action == "dispatch_intent":
+                if self.unreconciled_restore_fences():
+                    raise StoreError("Unreconciled restore fence blocks dispatch")
+                if db.execute("SELECT 1 FROM accounting_stops LIMIT 1").fetchone():
+                    raise StoreError("Integrity stop blocks dispatch")
+            elif action == "seal":
+                if self._objects_directory is None:
+                    raise StoreError("Sealing requires objects_directory")
+                bundle = artifact_objects.read_artifact(
+                    self._objects_directory, result["artifact_ref"]
+                )
+                # Reconcile file and directory durability before committing the reference.
+                if (
+                    artifact_objects.publish_artifact(self._objects_directory, bundle)
+                    != result["artifact_ref"]
+                ):
+                    raise StoreError("Artifact publication identity mismatch")
+            elif action == "verify_intent":
+                context = request["challenge"]["context"]
+                if context["controller_generation"] != self.controller_generation or context[
+                    "artifact_binding_sha256"
+                ] != digest(result["artifact_ref"]):
+                    raise StoreError("Verification challenge is not bound to this controller")
+            self._commit_attempt_event(db, event_id, previous, request, result)
+            db.execute("COMMIT")
+            return result
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
 
     def record_accounting(self, event_id: str, request: dict) -> dict:
         """Atomic offline prepare/interrupt/settle; exact event/receipt repeats are no-ops.

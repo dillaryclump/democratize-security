@@ -164,6 +164,9 @@ def test_missing_artifact_blocks_pending_intent(pending):
 def make_v4(case, *, legacy_evidence=True):
     assert digest(V4_SCHEMA) == "faaea6fd6f6ac9e0770d71bdbfbfa5ccb9b9dc2952b9847752709b77792cd9d2"
     with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE runtime_results")
+        db.execute("DROP TABLE restore_reconciliations")
+        db.execute("DROP TABLE restore_fences")
         db.execute("DROP TABLE controller_generations")
         db.execute("DROP TABLE verification_intents")
         db.execute("PRAGMA user_version=4")
@@ -206,7 +209,16 @@ def test_v4_migration_preserves_legacy_evidence_without_fabricating_intent(pendi
         assert [
             line
             for line in store._db.iterdump()
-            if "verification_intents" not in line and "controller_generations" not in line
+            if "verification_intents" not in line
+            and all(
+                name not in line
+                for name in (
+                    "controller_generations",
+                    "runtime_results",
+                    "restore_fences",
+                    "restore_reconciliations",
+                )
+            )
         ] == before
         assert store.verification_intents() == []
         legacy = store.evidence_bindings()[0]

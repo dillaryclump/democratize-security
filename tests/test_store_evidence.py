@@ -310,6 +310,9 @@ def test_immutable_rows_and_rehashed_projection_mismatch(case):
 def make_v3(case):
     assert digest(V3_SCHEMA) == "b4ad26ef24500ea46a364e6890319a7524c21746088896ea5cca983ef95555ed"
     with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE runtime_results")
+        db.execute("DROP TABLE restore_reconciliations")
+        db.execute("DROP TABLE restore_fences")
         db.execute("DROP TABLE controller_generations")
         db.execute("DROP TABLE verification_intents")
         db.execute("DROP TABLE evidence_bindings")
@@ -334,7 +337,15 @@ def test_v3_migration_requires_opt_in_and_preserves_exact_records(case):
             for line in store._db.iterdump()
             if "evidence_bindings" not in line
             and "verification_intents" not in line
-            and "controller_generations" not in line
+            and all(
+                name not in line
+                for name in (
+                    "controller_generations",
+                    "runtime_results",
+                    "restore_fences",
+                    "restore_reconciliations",
+                )
+            )
         ] == before
         seed_intent(case, store)
         assert store.record_evidence("report", case["request"])
