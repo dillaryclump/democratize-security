@@ -182,3 +182,40 @@ def test_non_scripted_backend_is_rejected(tmp_path, no_litellm):
 def test_reference_bytes_match_every_task_oracle():
     for name in ("invoice-read", "invoice-search", "invoice-export"):
         assert (ROOT / f"tasks/harbor/{name}/solution/app.py").read_bytes() == tc.REFERENCE_APP
+
+
+@pytest.fixture(scope="module")
+def conformance():
+    import runpy
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    try:
+        yield runpy.run_path(str(ROOT / "scripts/terminus_conformance.py"))
+    finally:
+        sys.path.remove(str(ROOT / "scripts"))
+
+
+def test_derived_task_differs_only_by_baked_tmux(conformance, tmp_path):
+    canonical = ROOT / "tasks/harbor/invoice-read"
+    before = {p: p.read_bytes() for p in canonical.rglob("*") if p.is_file()}
+    derived = tmp_path / "task"
+    conformance["prepare_terminus_task"](canonical, derived)
+    assert {p: p.read_bytes() for p in canonical.rglob("*") if p.is_file()} == before
+    files = sorted(p.relative_to(derived) for p in derived.rglob("*") if p.is_file())
+    assert files == sorted(p.relative_to(canonical) for p in before)
+    for relative in files:
+        if relative.as_posix() != "environment/Dockerfile":
+            assert (derived / relative).read_bytes() == (canonical / relative).read_bytes()
+    original = (canonical / "environment/Dockerfile").read_text().splitlines(keepends=True)
+    changed = (derived / "environment/Dockerfile").read_text().splitlines(keepends=True)
+    entry = next(i for i, line in enumerate(original) if line.startswith("ENTRYPOINT "))
+    assert changed == original[:entry] + [conformance["TMUX"]] + original[entry:]
+    assert (derived / "solution/solve.sh").stat().st_mode & 0o111
+
+
+def test_conformance_output_is_allowlisted_for_bounded_worker_storage():
+    import runpy
+
+    helper = runpy.run_path(str(ROOT / "scripts/worker_host.py"))
+    assert "terminus-conformance" in helper["PARENTS"]

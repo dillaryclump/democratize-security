@@ -33,6 +33,7 @@ PARENTS = {
     "harbor-apps/invoice-search",
     "harbor-apps/invoice-export",
     "worker-host-check",
+    "terminus-conformance",
 }
 
 
