@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from democratize_security import artifacts, objects
+from democratize_security import artifacts, backup, objects
 from democratize_security.contracts import digest
 from democratize_security.runtime_auth import VerifierSession
 from democratize_security.store import V6_SCHEMA, VERSION, PlanStore, StoreError
@@ -197,6 +197,52 @@ def test_dispatch_blocked_by_unreconciled_fence(case):
         with pytest.raises(StoreError, match="restore fence"):
             store.record_runtime("dispatch", DISPATCH)
         assert store.attempts()[0]["phase"] == "preparing"
+
+
+def test_fence_survives_reopen_and_reconcile_requires_reconciling_attempts(case):
+    with open_store(case) as store:
+        store.record_runtime("prep", prepare(case))
+    insert_fence(case)
+    statement = "Checked runner; nothing submitted."
+    with open_store(case) as store:
+        with pytest.raises(StoreError, match="Reconcile restored runtime attempts first"):
+            store.reconcile_restore("clear", "restore-1", statement)
+        with pytest.raises(StoreError, match="Unknown restore fence"):
+            store.reconcile_restore("clear", "restore-2", statement)
+        with pytest.raises(StoreError, match="bounded reconciliation statement"):
+            store.reconcile_restore("clear", "restore-1", "  ")
+    with open_store(case) as store:
+        assert store.unreconciled_restore_fences() == ["restore-1"]
+        assert store.budget_snapshot(case["plan"]["campaign_id"])["restore_fenced"] is True
+        store.record_runtime("rec", runtime("reconcile", 1, reason="restored from backup"))
+        record = store.reconcile_restore("clear", "restore-1", statement)
+        assert record["fence_id"] == "restore-1"
+        # Exact retry is idempotent; a changed statement under the same identity stops.
+        assert store.reconcile_restore("clear", "restore-1", statement) == record
+        with pytest.raises(StoreError, match="Conflicting restore reconciliation"):
+            store.reconcile_restore("clear", "restore-1", "A different statement.")
+    with open_store(case) as store:
+        assert store.unreconciled_restore_fences() == []
+        assert store.budget_snapshot(case["plan"]["campaign_id"])["restore_fenced"] is False
+        # Clearing the fence does not resume the attempt; it still needs resolution.
+        assert store.attempts()[0]["phase"] == "reconciling"
+
+
+def test_restored_ledger_blocks_dispatch_until_reconciled(case, tmp_path):
+    with open_store(case) as store:
+        store.record_runtime("prep", prepare(case))
+    snapshot, restored = tmp_path / "snapshot", tmp_path / "restored"
+    backup.create_backup(case["ledger"], snapshot, objects_directory=case["artifact_dir"])
+    fence = backup.restore_backup(snapshot, restored)["restore_fence_id"]
+    with PlanStore(restored / "ledger", objects_directory=restored / "artifacts") as store:
+        assert store.unreconciled_restore_fences() == [fence]
+        with pytest.raises(StoreError, match="restore fence"):
+            store.record_runtime("dispatch", DISPATCH)
+        store.record_runtime("rec", runtime("reconcile", 1, reason="restored from backup"))
+        store.reconcile_restore("clear", fence, "Runner shows no request for r1.")
+        store.record_runtime("resolve", runtime("resolve", 2, observation_sha256="4" * 64))
+        dispatch = dict(DISPATCH, expected_revision=3)
+        assert store.record_runtime("dispatch", dispatch)["phase"] == "dispatch_pending"
 
 
 def test_seal_rejects_missing_or_tampered_artifact(case):

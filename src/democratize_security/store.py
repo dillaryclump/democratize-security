@@ -1434,6 +1434,62 @@ class PlanStore:
                 db.execute("ROLLBACK")
             raise
 
+    def reconcile_restore(self, event_id: str, fence_id: str, statement: str) -> dict:
+        """Explicitly clear one restore fence after reconciling external work.
+
+        Every nonterminal runtime attempt must already be `reconciling` (or
+        terminal), so no restored attempt silently resumes. The statement records
+        how the operator established that no unrecorded external work remains.
+        """
+        _identifier(event_id)
+        _identifier(fence_id)
+        if not isinstance(statement, str) or not statement.strip() or len(statement) > 1024:
+            raise StoreError("A bounded reconciliation statement is required")
+        record = {
+            "schema_version": 1,
+            "kind": "restore_reconciliation",
+            "event_id": event_id,
+            "fence_id": fence_id,
+            "statement": statement,
+        }
+        db = self._begin_write()
+        try:
+            existing = db.execute(
+                "SELECT record_json FROM restore_reconciliations "
+                "WHERE event_id = ? OR fence_id = ?",
+                (event_id, fence_id),
+            ).fetchall()
+            if existing:
+                if any(row[0] != _json(record) for row in existing):
+                    db.execute(
+                        "INSERT OR IGNORE INTO accounting_stops VALUES (?, 'conflicting_identity')",
+                        (event_id,),
+                    )
+                    db.execute("COMMIT")
+                    raise StoreError("Conflicting restore reconciliation identity")
+                db.execute("COMMIT")
+                return record
+            if fence_id not in self.unreconciled_restore_fences():
+                raise StoreError("Unknown restore fence")
+            active = [
+                s["attempt_id"]
+                for s in self.attempts()
+                if s.get("mode") == RUNTIME_MODE
+                and s["phase"] not in ("reconciling", "completed", "interrupted")
+            ]
+            if active:
+                raise StoreError(f"Reconcile restored runtime attempts first: {active}")
+            db.execute(
+                "INSERT INTO restore_reconciliations VALUES (?, ?, ?, ?)",
+                (event_id, fence_id, datetime.now(UTC).isoformat(), _json(record)),
+            )
+            db.execute("COMMIT")
+            return record
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+
     def record_runtime(self, event_id: str, request: dict) -> dict:
         """Fenced runtime transition in the shared attempt ledger (store v7).
 

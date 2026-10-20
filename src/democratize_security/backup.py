@@ -14,6 +14,7 @@ import sqlite3
 import stat
 import tempfile
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 from democratize_security.artifacts import MAX_BUNDLE_BYTES
@@ -22,7 +23,7 @@ from democratize_security.evidence import MAX_EVIDENCE_BYTES
 from democratize_security.store import VERSION, PlanStore
 
 # Added schemas require reviewed object, ownership and restoration semantics.
-SUPPORTED_STORE_VERSIONS = frozenset({6})
+SUPPORTED_STORE_VERSIONS = frozenset({7})
 MAX_DATABASE_BYTES = 512 * 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_BACKUP_FILES = 100_001
@@ -120,7 +121,7 @@ def _references(store):
     """Only this explicitly supported schema's referenced object kinds are copied."""
     if VERSION not in SUPPORTED_STORE_VERSIONS:
         raise BackupError("Store version requires a reviewed backup implementation")
-    _ = store.controller_generation  # Revalidate v6 ownership before snapshot admission.
+    _ = store.controller_generation  # Revalidate ownership before snapshot admission.
     campaigns = [
         campaign_id
         for (campaign_id,) in store._connection().execute(
@@ -136,6 +137,11 @@ def _references(store):
     for record in store.evidence_bindings():
         ref = record["request"]["evidence_ref"]
         refs[f"evidence/{ref['object_sha256']}.json"] = ref["byte_length"]
+    store.runtime_results()  # Revalidate admitted results; their envelopes are inline.
+    for state in store.attempts():
+        ref = state.get("artifact_ref")
+        if state.get("mode") == "runtime" and ref is not None:
+            refs[f"artifacts/{ref['object_sha256']}.json"] = ref["byte_length"]
     if len(refs) + 1 > MAX_BACKUP_FILES:
         raise BackupError("Backup file count exceeded")
     return campaigns, refs
@@ -168,10 +174,11 @@ def _manifest(directory):
             "restore_requires_reconciliation",
         }:
             raise BackupError("Invalid backup manifest fields")
-        if type(record["store_version"]) is int and record["store_version"] == 5:
+        if type(record["store_version"]) is int and record["store_version"] in (5, 6):
             raise BackupError(
-                "Version 5 backup requires its matching backup tool: restore there, "
-                "explicitly migrate that ledger, then create a new version 6 backup"
+                f"Version {record['store_version']} backup requires its matching backup tool: "
+                "restore there, explicitly migrate that ledger, then create a new version "
+                f"{VERSION} backup"
             )
         if (
             type(record["schema_version"]) is not int
@@ -344,11 +351,45 @@ def create_backup(
         return verify_backup(destination)
 
 
-def restore_backup(directory: Path, destination: Path) -> dict:
-    """Validate first, then restore to a fresh directory and validate its ledger.
+def _fence(database: Path, fence_id: str, backup_sha256: str) -> None:
+    """Durably add one restore fence to a validated, not-yet-opened restored ledger."""
+    fence = {
+        "schema_version": 1,
+        "kind": "restore_fence",
+        "fence_id": fence_id,
+        "backup_sha256": backup_sha256,
+    }
+    with closing(sqlite3.connect(database, isolation_level=None)) as db:
+        db.execute("PRAGMA synchronous=FULL")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute(
+                "INSERT INTO restore_fences VALUES (?, ?, ?)",
+                (
+                    fence_id,
+                    datetime.now(UTC).isoformat(),
+                    json.dumps(fence, sort_keys=True, separators=(",", ":"), allow_nan=False),
+                ),
+            )
+            db.execute("COMMIT")
+        except BaseException:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+    fd = os.open(database, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
-    Returned reconciliation advice is not persistent runtime fencing. No runtime
-    or secret-store schema is supported, and this function never executes work.
+
+def restore_backup(directory: Path, destination: Path) -> dict:
+    """Validate first, then restore to a fresh directory and fence its ledger.
+
+    External work may postdate the backup, so the restored ledger durably carries
+    a restore fence: no runtime dispatch until `PlanStore.reconcile_restore`
+    records an explicit reconciliation. This function never executes work.
     """
     directory = Path(directory).absolute()
     manifest = verify_backup(directory)
@@ -360,11 +401,15 @@ def restore_backup(directory: Path, destination: Path) -> dict:
             raise BackupError("Backup changed during restore")
     _validate_payload(destination, manifest)
     _check_files(destination, manifest, published=False)
+    backup_sha256 = digest(manifest)
+    fence_id = f"restore-{backup_sha256}"
+    _fence(destination / "ledger/ledger.sqlite3", fence_id, backup_sha256)
     record = {
         "schema_version": 1,
         "kind": "offline_store_restore",
-        "backup_sha256": digest(manifest),
+        "backup_sha256": backup_sha256,
         "store_version": VERSION,
+        "restore_fence_id": fence_id,
         "execution_enabled": False,
         "reconciliation_required": True,
     }
