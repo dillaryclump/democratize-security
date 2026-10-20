@@ -12,7 +12,7 @@ from test_store_evidence import build_case, open_store
 from democratize_security import backup, evidence_objects
 from democratize_security import evidence as evidence_contract
 from democratize_security.contracts import digest
-from democratize_security.store import PlanStore, StoreError
+from democratize_security.store import VERSION, PlanStore, StoreError
 from democratize_security.verification.report import REQUIRED, Check, summarize
 
 
@@ -48,32 +48,64 @@ def rewrite_manifest(directory, change):
     (directory / "manifest.json").write_bytes(backup._encode(manifest))
 
 
+def historical_dump(connection):
+    """All pre-v6 record/schema bytes stay unchanged; ownership is separately asserted."""
+    return [line for line in connection.iterdump() if "controller_generations" not in line]
+
+
+def generation_rows(connection):
+    return connection.execute(
+        "SELECT generation, process_id FROM controller_generations ORDER BY generation"
+    ).fetchall()
+
+
 def test_verified_roundtrip_preserves_full_ledger_references_and_unknown_cost(case, tmp_path):
     snapshot, restored = tmp_path / "snapshot", tmp_path / "restored"
     (case["artifact_dir"] / "orphan.json").write_text("not referenced")
     (case["evidence_dir"] / ".evidence-orphan").write_text("not referenced")
     with open_store(case) as store:
-        original = list(store._connection().iterdump())
+        original = historical_dump(store._connection())
+        generation = store.controller_generation
+        history = generation_rows(store._connection())
         budget = store.budget_snapshot(case["plan"]["campaign_id"])
         attempts = store.attempts()
     manifest = create(case, snapshot)
     assert manifest == backup.verify_backup(snapshot)
     assert manifest["restore_requires_reconciliation"] is True
     assert manifest["execution_enabled"] is False
+    assert manifest["store_version"] == VERSION == 6
+    with sqlite3.connect(snapshot / "ledger/ledger.sqlite3") as db:
+        snapshot_history = generation_rows(db)
+        assert historical_dump(db) == original
+        assert snapshot_history == [*history, (generation + 1, os.getpid())]
     assert len(manifest["files"]) == 3
     assert all("orphan" not in entry["path"] for entry in manifest["files"])
     with open_store(case) as store:
-        assert list(store._connection().iterdump()) == original
+        assert historical_dump(store._connection()) == original
+        assert generation_rows(store._connection()) == [
+            *snapshot_history,
+            (generation + 2, os.getpid()),
+        ]
     provenance = backup.restore_backup(snapshot, restored)
     assert provenance["backup_sha256"] == digest(manifest)
     assert provenance["execution_enabled"] is False
     assert provenance["reconciliation_required"] is True
+    # Restore validates scratch ownership; its real DB stays byte-identical until open.
+    for entry in manifest["files"]:
+        assert (snapshot / entry["path"]).read_bytes() == (restored / entry["path"]).read_bytes()
+    with sqlite3.connect(restored / "ledger/ledger.sqlite3") as db:
+        assert generation_rows(db) == snapshot_history
     with PlanStore(
         restored / "ledger",
         objects_directory=restored / "artifacts",
         evidence_directory=restored / "evidence",
     ) as store:
-        assert list(store._connection().iterdump()) == original
+        assert historical_dump(store._connection()) == original
+        assert generation_rows(store._connection()) == [
+            *snapshot_history,
+            (generation + 2, os.getpid()),
+        ]
+        assert store.controller_generation == generation + 2
         assert store.snapshot(case["plan"]["campaign_id"]) == case["plan"]
         assert store.attempts() == attempts
         assert store.budget_snapshot(case["plan"]["campaign_id"]) == budget
@@ -83,8 +115,7 @@ def test_verified_roundtrip_preserves_full_ledger_references_and_unknown_cost(ca
     for root in (snapshot, restored):
         for path in (root, *root.rglob("*")):
             assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
-    for entry in manifest["files"]:
-        assert (snapshot / entry["path"]).read_bytes() == (restored / entry["path"]).read_bytes()
+    assert backup.verify_backup(snapshot) == manifest
 
 
 def test_empty_ledger_and_coincident_object_directories(tmp_path):
@@ -216,7 +247,7 @@ def test_tampered_snapshot_never_creates_a_restore(case, tmp_path, damage):
     "change",
     [
         lambda m: m.update(schema_version=True),
-        lambda m: m.update(store_version=6),
+        lambda m: m.update(store_version=VERSION + 1),
         lambda m: m.update(extra="unexpected"),
         lambda m: m.update(execution_enabled=True),
         lambda m: m.update(restore_requires_reconciliation=False),
@@ -291,8 +322,8 @@ def test_snapshot_verification_does_not_modify_database(case, tmp_path, monkeypa
         def __init__(self, directory, **kwargs):
             opened.append(directory)
             super().__init__(directory, **kwargs)
-            # Simulate startup metadata mutation without changing references.
-            self._connection().execute("PRAGMA user_version=5")
+            # Real v6 startup appends only to this scratch ownership history.
+            assert self.controller_generation >= 1
 
     monkeypatch.setattr(backup, "PlanStore", TrackingStore)
     backup.verify_backup(snapshot)
@@ -578,3 +609,127 @@ os._exit(69)
     assert backup.verify_backup(snapshot) == manifest
     with pytest.raises(FileExistsError):
         backup.restore_backup(snapshot, restored)
+
+
+def damage_generation_history(database, damage):
+    with sqlite3.connect(database) as db:
+        if damage == "gap":
+            last = db.execute("SELECT max(generation) FROM controller_generations").fetchone()[0]
+            db.execute("INSERT INTO controller_generations VALUES (?, ?)", (last + 2, os.getpid()))
+        elif damage == "pid":
+            trigger = "controller_generations_no_update"
+            sql = db.execute("SELECT sql FROM sqlite_master WHERE name=?", (trigger,)).fetchone()[0]
+            db.execute(f"DROP TRIGGER {trigger}")
+            db.execute(
+                "UPDATE controller_generations SET process_id='invalid-pid' WHERE generation=1"
+            )
+            db.execute(sql)
+        else:
+            db.execute("DROP TRIGGER controller_generations_no_delete")
+
+
+@pytest.mark.parametrize("damage", ["gap", "pid", "schema"])
+def test_corrupt_v6_source_generation_history_refuses_before_snapshot_creation(
+    case, tmp_path, damage
+):
+    database = case["ledger"] / "ledger.sqlite3"
+    damage_generation_history(database, damage)
+    with sqlite3.connect(database) as db:
+        before = list(db.iterdump())
+    with pytest.raises(StoreError, match="generation|schema"):
+        create(case, tmp_path / "snapshot")
+    assert not (tmp_path / "snapshot").exists()
+    with sqlite3.connect(database) as db:
+        assert list(db.iterdump()) == before
+
+
+@pytest.mark.parametrize("damage", ["gap", "pid", "schema"])
+def test_rehashed_v6_generation_corruption_rejects_verify_and_restore(case, tmp_path, damage):
+    snapshot, restored = tmp_path / "snapshot", tmp_path / "restored"
+    create(case, snapshot)
+    database = snapshot / "ledger/ledger.sqlite3"
+    damage_generation_history(database, damage)
+    rewrite_manifest(
+        snapshot,
+        lambda manifest: next(
+            entry for entry in manifest["files"] if entry["path"] == "ledger/ledger.sqlite3"
+        ).update(backup._read_file(database, backup.MAX_DATABASE_BYTES)),
+    )
+    before = database.read_bytes()
+    with pytest.raises(StoreError, match="generation|schema"):
+        backup.verify_backup(snapshot)
+    with pytest.raises(StoreError, match="generation|schema"):
+        backup.restore_backup(snapshot, restored)
+    assert database.read_bytes() == before
+    assert not restored.exists()
+
+
+def test_v6_scratch_allocations_never_change_frozen_or_restored_ownership(
+    case, tmp_path, monkeypatch
+):
+    snapshot, restored = tmp_path / "snapshot", tmp_path / "restored"
+    manifest = create(case, snapshot)
+    database = snapshot / "ledger/ledger.sqlite3"
+    original = database.read_bytes()
+    with sqlite3.connect(database) as db:
+        saved = generation_rows(db)
+    real = backup.PlanStore
+    allocations = []
+
+    class TrackingStore(real):
+        def __init__(self, directory, **kwargs):
+            super().__init__(directory, **kwargs)
+            allocations.append((directory, generation_rows(self._connection())))
+
+    monkeypatch.setattr(backup, "PlanStore", TrackingStore)
+    for _ in range(3):
+        assert backup.verify_backup(snapshot) == manifest
+    backup.restore_backup(snapshot, restored)
+    assert len(allocations) == 5  # Three verifications, source and restored validation.
+    assert all(
+        directory not in (snapshot / "ledger", restored / "ledger") for directory, _ in allocations
+    )
+    assert all(rows == [*saved, (saved[-1][0] + 1, os.getpid())] for _, rows in allocations)
+    assert database.read_bytes() == original
+    assert (restored / "ledger/ledger.sqlite3").read_bytes() == original
+    with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        assert generation_rows(db) == saved
+    with PlanStore(
+        restored / "ledger",
+        objects_directory=restored / "artifacts",
+        evidence_directory=restored / "evidence",
+    ) as store:
+        assert generation_rows(store._connection()) == allocations[-1][1]
+        assert store.controller_generation == saved[-1][0] + 1
+
+
+def test_v5_source_and_archive_require_explicit_migration_not_implicit_relabeling(case, tmp_path):
+    snapshot, restored = tmp_path / "snapshot", tmp_path / "restored"
+    create(case, snapshot)
+    database = snapshot / "ledger/ledger.sqlite3"
+    for path in (case["ledger"] / "ledger.sqlite3", database):
+        with sqlite3.connect(path) as db:
+            db.execute("DROP TABLE controller_generations")
+            db.execute("PRAGMA user_version=5")
+
+    def legacy_manifest(manifest):
+        manifest["store_version"] = 5
+        next(
+            entry for entry in manifest["files"] if entry["path"] == "ledger/ledger.sqlite3"
+        ).update(backup._read_file(database, backup.MAX_DATABASE_BYTES))
+
+    rewrite_manifest(snapshot, legacy_manifest)
+    original = {path: path.read_bytes() for path in (case["ledger"] / "ledger.sqlite3", database)}
+    with pytest.raises(StoreError, match="Version 5 requires explicit migrate=True"):
+        create(case, tmp_path / "new-snapshot")
+    for operation in (
+        lambda: backup.verify_backup(snapshot),
+        lambda: backup.restore_backup(snapshot, restored),
+    ):
+        with pytest.raises(backup.BackupError, match="matching backup tool.*explicitly migrate"):
+            operation()
+    assert not (tmp_path / "new-snapshot").exists() and not restored.exists()
+    assert {path: path.read_bytes() for path in original} == original
+    with open_store(case, migrate=True) as store:
+        assert store.controller_generation == 1
+    assert create(case, tmp_path / "migrated-snapshot")["store_version"] == 6

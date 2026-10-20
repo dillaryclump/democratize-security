@@ -267,6 +267,7 @@ def make_v2(case):
     ledger = case[0]
     assert digest(V2_SCHEMA) == "183c0478e8b9ba7fa200b902dc4f49d4087adbec12e6c456107187c07b27e994"
     with sqlite3.connect(ledger / "ledger.sqlite3") as db:
+        db.execute("DROP TABLE controller_generations")
         db.execute("DROP TABLE verification_intents")
         db.execute("DROP TABLE evidence_bindings")
         db.execute("DROP TABLE artifact_bindings")
@@ -288,6 +289,7 @@ def test_v2_migration_preserves_rows_and_requires_opt_in(case):
             if "artifact_bindings" not in line
             and "evidence_bindings" not in line
             and "verification_intents" not in line
+            and "controller_generations" not in line
         ]
         assert old_dump == before
         assert store.record_artifact("bind", case[2])

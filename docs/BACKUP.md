@@ -1,7 +1,7 @@
 # Verified offline backup and restore
 
 `democratize_security.backup` implements the offline backup prerequisite from
-[PERSISTENCE.md](PERSISTENCE.md). It supports store **version 5** only. It preserves
+[PERSISTENCE.md](PERSISTENCE.md). It supports store **version 6** only. It preserves
 the entire SQLite ledger and every referenced sealed artifact and offline evidence
 object. It performs no migration, model call, external job, result acceptance or
 cost settlement. It does not modify the offline campaign or verifier protocol.
@@ -37,7 +37,16 @@ The returned restore contains `ledger/ledger.sqlite3`, `artifacts/`, `evidence/`
 and `restore.json`. Open its ledger with `PlanStore`, supplying the restored object
 directories. Unknown-cost holds, interruptions, planned trials, immutable events,
 verification intent and incomplete/failed reports retain their original meaning.
-A saved passing offline report remains an offline observation.
+A saved passing offline report remains an offline observation. The restored
+ledger initially retains the snapshot's exact ownership history and database
+bytes; its first successful `PlanStore` open appends the next local generation.
+
+Version 5 source ledgers require an explicit `PlanStore(..., migrate=True, ...)`
+upgrade before a new backup can be created. This version does not silently
+migrate or relabel v5 archives. Use the matching v5 backup implementation to
+restore an existing v5 package, explicitly migrate that restored ledger, then
+create and verify a new v6 backup. Keep the old archive unchanged. Future schemas,
+including v7, require separately reviewed backup/reference/restore semantics.
 
 ## Snapshot and validation behavior
 
@@ -45,6 +54,10 @@ A saved passing offline report remains an offline observation.
 An existing owner causes immediate refusal. Opening validates the exact schema,
 SQLite integrity/foreign keys, whole plans, immutable event history, attempt
 projections, artifact bindings, intent, evidence bindings and referenced bytes.
+It also validates the complete v6 generation history and durably appends a new
+controller generation to the source ledger before creating the snapshot. That
+allocation remains consumed if the later backup fails. The snapshot contains
+the source's complete history through that allocation; no historical row changes.
 The SQLite backup API then takes a coherent snapshot of that connection while
 ownership remains held. It never copies a live database file in place of that API.
 
@@ -70,8 +83,9 @@ able to rewrite both ledger and objects is outside this integrity boundary.
 
 `verify_backup` does not open the frozen snapshot's database as a writable store.
 It validates a private database copy, and rechecks the package files afterward.
-This leaves the snapshot byte-identical even if a future explicitly supported
-store version updates metadata at open. `restore_backup` validates the package
+This leaves the snapshot byte-identical while v6 allocates a temporary controller
+generation in the disposable scratch database. Repeated validation never appends
+to the frozen snapshot or restored database. `restore_backup` validates the package
 before creating its destination, copies its exact inventoried bytes, revalidates
 the restored ledger/references, and syncs the new files and directories before
 returning provenance bound to the manifest digest.
@@ -93,6 +107,10 @@ capacity, retention, encryption and off-device replication remain operator polic
 the tool does not provision or upload storage.
 
 Restoration never proves external work stopped or that provider bills are known.
+Generation monotonicity applies to one unchanged ledger lineage. Copying an older
+snapshot preserves that history, but its subsequent local allocations cannot fence
+a separate live source or jobs started after the snapshot. This version adds no
+runtime restoration gate; #62 owns that separately reviewed lifecycle integration.
 `restore.json` records reconciliation advice; it is **not persistent runtime
 fencing**. All current plans still have execution disabled. Before any future
 runtime enables dispatch, it must reconcile requests that could postdate a
@@ -107,5 +125,9 @@ verification secret stores are not supported or silently omitted by this version
 unknown-cost accounting, concurrent process ownership, special files, corrupted
 source objects, rehashed database corruption, incomplete inventories, bounded
 canonical manifests, no-overwrite behavior, write/sync faults and abrupt process
-death around publication. Run the full required repository checks as well;
-PostgreSQL and Docker integration require their configured disposable services.
+death around publication. V6 regressions assert source/snapshot/restore ownership
+rows exactly, unchanged frozen database bytes after repeated scratch validation,
+source and rehashed snapshot generation-history corruption, explicit v5 rejection
+and successful backup after deliberate source migration. Run the full required
+repository checks as well; PostgreSQL and Docker integration require their
+configured disposable services.
