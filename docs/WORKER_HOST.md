@@ -1,8 +1,9 @@
 # Dedicated Linux worker preparation
 
-Status: portable host helper and opt-in Harbor hookup, issue #54. Actual worker
-provisioning and privileged acceptance are **deferred to Dillon's better
-computer**. No VM, model execution or M2 acceptance is established by this change.
+Status: host helper and opt-in Harbor hookup, issue #54, exercised on the
+dedicated WSL2 worker Dillon selected (see below and STATUS.md for the measured
+run at `2a6ed57`). No model execution or M2 owner acceptance is established by
+this change; acceptance stays in #19.
 The helper does not dispatch work, authenticate verifier results, implement
 controller recovery, or authorize spending.
 
@@ -224,8 +225,26 @@ remain unmeasured until the selected host executes the finite controls.
 Unit tests cover path/name and symlink rejection, retained intent on preparation
 failure, actual-mount mismatches, stale-job refusal, detached-Docker requirements,
 bounded archival of hostile metadata, corruption, lock ownership and fail-closed
-Harbor preflight. Linux mount/overflow/crash controls and the full Harbor/worker
-regressions are pending on the deferred dedicated machine. A reviewed code change
-and green unit tests do not establish M2 acceptance. Finish those controls,
-review #19, and complete runtime provenance/recovery plus a finite approved model
-budget before model execution.
+Harbor preflight.
+
+Observed on the dedicated WSL2 worker, 2026-10-20, source `2a6ed57`
+(`git archive` SHA-256 `c3cee1fb...81d8`), Docker Engine 29.9.1 with cgroup v2,
+`python:3.12-slim` `sha256:a6e34c59...11b1`, `postgres:17` `sha256:2d2b8998...f9e3`:
+
+- `check_host.py`: real 64 MiB ext4 loop mount (58,675,200 usable bytes),
+  crash-surviving preparation inspected, duplicate preparation rejected,
+  ENOSPC after 57,307,136 written bytes, archived and released.
+- `regressions.sh`: full suite 1000 passed with PostgreSQL and Docker required;
+  replay, audit and all three application tasks passed with
+  `DS_WORKER_HOST_REQUIRED=1`. All 37 audited trials reported
+  `own_filesystem: true` and no `trial_storage_unbounded`; the remaining gaps
+  were `agent_can_write_verifier_log_directory` and `verifier_storage_unbounded`.
+  All 41 jobs were archived and released in the run's session; none retained.
+- An earlier run on the same host showed the idle-stop behaviour above: its jobs
+  were left unmounted with images retained, which is why `regressions.sh` now
+  archives in-session. That run's state is retained for inspection.
+
+The WSL2 VM has no explicit CPU/memory bound unless `.wslconfig` sets one, and
+containers share its kernel. These results are not M2 owner acceptance (#19).
+Runtime provenance/recovery and a finite approved model budget still gate model
+execution.

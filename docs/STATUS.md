@@ -113,12 +113,20 @@ fallback. A real stop failure still fails, now with the measured lead. Locally
 all 12 trials and 12/12 audits. In every trial `die` trailed the recorded exit by
 48–87 ms, and the first collector exec came 108–840 ms after `die`.
 
-M2 owner acceptance remains open in #19. Remaining observed runner gaps are
-`agent_can_write_verifier_log_directory`, `verifier_storage_unbounded` and
-`trial_storage_unbounded`. A dedicated host must bound each trial job directory;
-repository scripts do not mount filesystems with privilege. Public fixtures are
-not a protected holdout and containers share the host kernel. See
-[HARBOR_AUDIT.md](HARBOR_AUDIT.md) for the measured boundary.
+M2 owner acceptance remains open in #19. On ordinary hosts the observed runner
+gaps are `agent_can_write_verifier_log_directory`, `verifier_storage_unbounded`
+and `trial_storage_unbounded`. Issue #54 (PR #61) adds the dedicated-worker
+helper: with `DS_WORKER_HOST_REQUIRED=1`, each Harbor job gets its own 64 MiB
+ext4 loop filesystem before launch. On the dedicated WSL2 worker Dillon selected
+(source `2a6ed57`, Docker Engine 29.9.1, cgroup v2), the privileged storage
+control reached ENOSPC at 57,307,136 bytes, the full suite passed (1000, no
+skips, real PostgreSQL and Docker), and replay, audit and all three application
+tasks passed. All 37 audited trials observed `own_filesystem: true` at
+58,675,200 bytes, so `trial_storage_unbounded` no longer appears there; the two
+verifier gaps remain for owner review. All 41 jobs were archived and released in
+the same session. Public fixtures are not a protected holdout, and containers
+share the WSL2 kernel. See [WORKER_HOST.md](WORKER_HOST.md) and
+[HARBOR_AUDIT.md](HARBOR_AUDIT.md).
 
 Production identity, license, branch protection and vulnerability-reporting
 setup remain owner decisions. Green CI and merged code
@@ -127,8 +135,9 @@ are not owner acceptance or evidence of product efficacy.
 Owner review update, 2026-10-17: Dillon approved the existing synthetic scope,
 contract defaults and review of M2 evidence/residual limitations; recorded in
 [#19](https://github.com/dillaryclump/democratize-security/issues/19#issuecomment-6238276266).
-Issue #19 remains open pending bounded worker-host proof. Actual VM provisioning
-is deferred to Dillon's better computer. Production identity and the other owner
+Issue #19 remains open for owner acceptance of the bounded worker-host evidence
+above (2026-10-20: Dillon chose a dedicated local WSL2 distro instead of waiting
+for another machine). Production identity and the other owner
 decisions above remain unresolved. Infrastructure/model spending has no approved
 finite budget, and this approval does not enable execution.
 
