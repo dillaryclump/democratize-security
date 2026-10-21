@@ -210,3 +210,62 @@ def test_verifier_without_nonce_emits_no_reward(tmp_path, environ):
     with pytest.raises(SystemExit):
         VERIFIER["main"](output, tmp_path / "absent.json", environ)
     assert list(output.iterdir()) == []
+
+
+POLICY_KEYS = {"checks", "artifact_sha256", "reward", "schema_version"}
+
+
+def accept_any(tmp_path):
+    return SPIKE["accept_trial"](
+        tmp_path,
+        "oracle",
+        None,
+        NONCE,
+        evidence="policy-evidence.json",
+        artifact="policy.json",
+        keys=POLICY_KEYS,
+    )
+
+
+@pytest.mark.parametrize("reward", [0, 1])
+def test_accept_trial_reward_none_accepts_either_bound_reward(tmp_path, reward):
+    trial, result, evidence = fixture(tmp_path)
+    result["verifier_result"]["rewards"]["reward"] = reward
+    (trial / "result.json").write_text(json.dumps(result))
+    sign(trial, {**evidence, "reward": reward})
+    record, bundle = accept_any(tmp_path)
+    assert record["reward"] == reward
+    assert bundle["files"][0]["sha256"] == record["artifact_sha256"]
+
+
+def test_accept_trial_reward_none_still_requires_mac(tmp_path):
+    trial, _, evidence = fixture(tmp_path)
+    sign(trial, evidence, nonce="b" * 64)
+    with pytest.raises(ValueError, match="nonce"):
+        accept_any(tmp_path)
+
+
+@pytest.mark.parametrize("rewards", [{"reward": 2}, {}, {"reward": True}, None])
+def test_accept_trial_reward_none_rejects_nonbinary_harbor_reward(tmp_path, rewards):
+    trial, result, _ = fixture(tmp_path)
+    result["verifier_result"]["rewards"] = rewards
+    (trial / "result.json").write_text(json.dumps(result))
+    with pytest.raises(ValueError):
+        accept_any(tmp_path)
+
+
+def test_accept_trial_reward_none_rejects_disagreeing_evidence(tmp_path):
+    trial, _, evidence = fixture(tmp_path)
+    sign(trial, {**evidence, "reward": 0})
+    with pytest.raises(ValueError, match="disagrees"):
+        accept_any(tmp_path)
+
+
+def test_trial_argv_matches_run_trial(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(SPIKE["subprocess"], "run", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.delenv("DS_WORKER_HOST_REQUIRED", raising=False)
+    nonce = SPIKE["run_trial"](tmp_path, "nop", tmp_path / "jobs", "job-1")
+    (argv,), options = calls[0]
+    assert argv == SPIKE["trial_argv"](tmp_path, "nop", tmp_path / "jobs", "job-1")
+    assert options["env"][SPIKE["NONCE"]] == nonce

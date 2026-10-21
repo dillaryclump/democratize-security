@@ -27,8 +27,8 @@ def evidence_mac(nonce, evidence):
     return hmac.new(nonce.encode(), data, hashlib.sha256).hexdigest()
 
 
-def run_trial(task, agent, jobs_dir, job_name):
-    """Run one finite, retry-free trial; return the nonce only its verifier saw."""
+def prepare_storage(jobs_dir, job_name):
+    """Mount the job's bounded filesystem when the dedicated worker is required."""
     storage = os.environ.get("DS_WORKER_HOST_REQUIRED", "0")
     if storage not in {"0", "1"}:
         raise ValueError("DS_WORKER_HOST_REQUIRED must be 0 or 1")
@@ -55,14 +55,26 @@ def run_trial(task, agent, jobs_dir, job_name):
             or not 0 < capacity.f_blocks * capacity.f_frsize <= 64 * 1024 * 1024
         ):
             raise ValueError("required worker job filesystem was not observed within 64 MiB")
-    nonce = secrets.token_hex(32)
-    subprocess.run(
+
+
+def trial_argv(task, agent, jobs_dir, job_name):
+    """The finite, retry-free `harbor run` command for one trial."""
+    return (
         ["harbor", "run", "-p", str(task), "-a", agent, "-n", "1", "-k", "1", "-r", "0"]
         + ["--jobs-dir", str(jobs_dir), "--job-name", job_name]
         # Harbor resolves the template from its own environment at verify time
         # and passes it only to the separate verifier's test exec, so the raw
         # value is never persisted in job configuration or shown to the agent.
-        + ["--ve", f"{NONCE}=${{{NONCE}}}"],
+        + ["--ve", f"{NONCE}=${{{NONCE}}}"]
+    )
+
+
+def run_trial(task, agent, jobs_dir, job_name):
+    """Run one finite, retry-free trial; return the nonce only its verifier saw."""
+    prepare_storage(jobs_dir, job_name)
+    nonce = secrets.token_hex(32)
+    subprocess.run(
+        trial_argv(task, agent, jobs_dir, job_name),
         check=True,
         timeout=600,
         cwd=ROOT,
@@ -99,6 +111,8 @@ def accept_trial(job, agent, reward, nonce, *, evidence, artifact, keys, expecte
 
     Requires one clean separate-verifier trial whose evidence, bound to this
     run's nonce, agrees with Harbor's reward and covers the collected bytes.
+    `reward=None` accepts either bound reward (0 or 1) for an outcome that is
+    not known in advance; every binding check still applies.
     """
     if expected_bundle is not None:
         validate(expected_bundle)
@@ -107,6 +121,13 @@ def accept_trial(job, agent, reward, nonce, *, evidence, artifact, keys, expecte
         raise ValueError("expected exactly one trial result")
     trial = results[0].parent
     result = json.loads(results[0].read_text())
+    if reward is None:
+        observed = (result.get("verifier_result") or {}).get("rewards")
+        if not isinstance(observed, dict) or observed.get("reward") not in (0, 1):
+            raise ValueError("missing, failed, or unexpected Harbor result")
+        reward = observed["reward"]
+        if type(reward) is not int:
+            raise ValueError("missing, failed, or unexpected Harbor result")
     if (
         result.get("exception_info") is not None
         or result.get("verifier_environment_mode") != "separate"
