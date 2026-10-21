@@ -287,7 +287,7 @@ Run this task only after Task 6 is merged.
 
 - [ ] **Step 1: Gate check.** Confirm all of the following:
   - #19 has owner acceptance of the worker evidence (it is listed as unresolved in `calibration.v1.json`);
-  - the owner has placed the key file on `ds-worker` (`chmod 600`) and set a provider hard limit of ≤ $10;
+  - the owner has placed the key at `/home/controller/.secrets/openai-api-key` on `ds-worker` (directory `0700`, file `0600`, owned by `controller`) and set a provider hard limit of ≤ $10. #19 was accepted on 2026-10-20;
   - the prices on the cited pages still match the snapshot (if not, stop and re-propose).
 - [ ] **Step 2: Run** `python scripts/calibration.py --live --key-file ... --ledger ...` on `ds-worker`.
 - [ ] **Step 3: Report the results.** Record the outcomes, requests, tokens, `committed_cents` and stop reason on #57/#69 without any key or account details. Re-estimate the pilot from the measured usage, and ask the owner before anything beyond the $10.
