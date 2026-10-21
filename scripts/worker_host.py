@@ -34,6 +34,8 @@ PARENTS = {
     "harbor-apps/invoice-export",
     "worker-host-check",
     "terminus-conformance",
+    "calibration",
+    "calibration-dry-run",
 }
 
 

@@ -126,6 +126,32 @@ jobs:
       - name: Model-free Terminus2 conformance through the audited boundary
         timeout-minutes: 30
         run: uv run --locked --group harbor python scripts/terminus_conformance.py
+  metered-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      REQUIRE_HARBOR_TESTS: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.12.23
+      - run: uv sync --locked --group harbor
+      - name: Brokered Terminus2 client unit tests (Harbor required, no skips)
+        run: uv run --locked --group harbor pytest tests/test_metered_terminus.py -ra
+      - name: Start and verify local Docker before Harbor preflight
+        run: |
+          sudo systemctl start docker
+          timeout 60 bash -c 'until docker --host unix:///var/run/docker.sock info >/dev/null 2>&1; do sleep 2; done'
+          docker compose version
+      - name: Preload Harbor's pinned egress kernel-probe image
+        run: docker pull alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
+      - name: Model-free metered calibration trial through the full runtime lifecycle
+        timeout-minutes: 30
+        run: uv run --locked --group harbor python scripts/calibration.py --dry-run
   harbor-apps:
     name: harbor-apps (${{ matrix.task }})
     runs-on: ubuntu-latest

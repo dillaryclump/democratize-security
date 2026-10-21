@@ -125,9 +125,10 @@ def accept_trial(job, agent, reward, nonce, *, evidence, artifact, keys, expecte
         observed = (result.get("verifier_result") or {}).get("rewards")
         if not isinstance(observed, dict) or observed.get("reward") not in (0, 1):
             raise ValueError("missing, failed, or unexpected Harbor result")
-        reward = observed["reward"]
-        if type(reward) is not int:
+        # Harbor records 0.0/1.0 floats; booleans are never a reward.
+        if type(observed["reward"]) not in (int, float):
             raise ValueError("missing, failed, or unexpected Harbor result")
+        reward = int(observed["reward"])
     if (
         result.get("exception_info") is not None
         or result.get("verifier_environment_mode") != "separate"

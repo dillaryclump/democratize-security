@@ -1,7 +1,7 @@
 # Verified offline backup and restore
 
 `democratize_security.backup` implements the offline backup prerequisite from
-[PERSISTENCE.md](PERSISTENCE.md). It supports store **version 7** only. It preserves
+[PERSISTENCE.md](PERSISTENCE.md). It supports store **version 8** only. It preserves
 the entire SQLite ledger and every referenced sealed artifact and offline evidence
 object. It performs no migration, model call, external job, result acceptance or
 cost settlement. It does not modify the offline campaign or verifier protocol.
@@ -43,11 +43,11 @@ bytes plus one restore fence; its first successful `PlanStore` open appends the
 next local generation. The fence blocks preparation and dispatch until
 `PlanStore.reconcile_restore` records an explicit reconciliation.
 
-Version 5 and 6 source ledgers require an explicit `PlanStore(..., migrate=True,
+Version 5, 6 and 7 source ledgers require an explicit `PlanStore(..., migrate=True,
 ...)` upgrade before a new backup can be created. This version does not silently
-migrate or relabel v5/v6 archives and refuses them with these instructions: use
+migrate or relabel v5/v6/v7 archives and refuses them with these instructions: use
 the matching backup implementation to restore the old package, explicitly
-migrate that restored ledger, then create and verify a new v7 backup. Keep the
+migrate that restored ledger, then create and verify a new v8 backup. Keep the
 old archive unchanged. Future schemas require separately reviewed semantics.
 
 ## Snapshot and validation behavior
@@ -132,6 +132,6 @@ rows exactly, unchanged frozen database bytes after repeated scratch validation,
 source and rehashed snapshot generation-history corruption, explicit v5 rejection
 and successful backup after deliberate source migration. V7 regressions assert
 the restored fence, that it blocks the budget and dispatch until reconciled,
-that it survives reopen, and that v5/v6 packages are refused with instructions. Run the full required
+that it survives reopen, and that v5/v6/v7 packages are refused with instructions. Run the full required
 repository checks as well; PostgreSQL and Docker integration require their
 configured disposable services.

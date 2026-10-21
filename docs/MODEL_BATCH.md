@@ -1,7 +1,10 @@
 # Model batch proposal and exact offline costs
 
-Status: **unapproved proposal, execution disabled**, issue #57. Sources fetched
-2026-10-17. No model, token-count, account or provider API request was made.
+Status: the owner approved a **$10 model-only cap for the six-trial calibration
+only** on 2026-10-20 (#57); the 48-trial pilot below remains unapproved. The
+metered transport and calibration driver are implemented in #69; see
+[CALIBRATION.md](CALIBRATION.md). Sources fetched 2026-10-17. No model,
+token-count, account or provider API request was made by these documents.
 The implementation estimates costs and validates finite proposals; it does not
 reserve funds, authenticate usage, dispatch agents or authorize execution.
 
@@ -219,7 +222,8 @@ retries or authenticate usage. The trusted metered transport must intercept ever
 forwarded generation request, or the adapter must call it directly. Do not widen
 the candidate network to run an in-container authenticated coding CLI.
 
-Still unimplemented here: live transport, durable per-model-request intent and
-reservations, controller/runtime wiring, authenticated accepted-result lifecycle,
-verified backup integration and worker acceptance. The offline estimator and
+Issue #69 implements the transport contract above for the calibration: exact
+preflight, durable per-request reservations in store v8, one retry-free send,
+upper-bound settlement, unknown-outcome holds, host-only credentials and
+authenticated admission through a sealed replay. The offline estimator and
 current public oracle are not independent final-study evidence.

@@ -71,6 +71,14 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
   `recovery_state` projects validated attempts onto recovery advice. No runner,
   dispatcher or provider is connected. See [PERSISTENCE.md](PERSISTENCE.md) and
   ADR 0007.
+- On #69: store v8 meters every model request of a runtime attempt (durable
+  intent before one retry-free send, upper-bound settlement, unknown outcomes keep
+  their hold and stop the batch). A controller-side broker serves Harbor's
+  `MeteredTerminus` over a private socket, so the provider key never enters the
+  Harbor environment. `scripts/calibration.py` runs each trial through the full
+  v8 lifecycle and admits only signed sealed-replay results. The model-free dry
+  run (CI `metered-dry-run`) admitted pass/complete and settled 3 cents locally.
+  See [CALIBRATION.md](CALIBRATION.md). No live model request has been made.
 - On #48: a pure recovery decision function covers synthetic crash observations,
   rejects stale/foreign context and preserves uncertain cost holds. It emits
   inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
@@ -100,10 +108,9 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 ## Next bounded work
 
-1. Connect a runner adapter to the v7 lifecycle: persist dispatch intent before
-   submission, authenticate worker/stop observations, launch the pinned verifier
-   with the private nonce and admit only through `admit_result`. Ambiguous
-   request outcomes must retain holds and never emit resubmission.
+1. Run the owner-approved $10 calibration on the dedicated worker (#69,
+   [CALIBRATION.md](CALIBRATION.md)) and re-estimate the pilot from its measured
+   usage. Any spend beyond $10 needs a new owner approval.
 2. Build the remaining pilot conditions and task families on the conformant
    Terminus2 transport (#63). Do not manufacture accepted results from the
    offline evidence APIs.
@@ -115,8 +122,8 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 M3 remains partial: no live recovery engine, production dispatcher, runner
 integration, protected final evaluator, paid pilot, demonstrated benchmark
-improvement or GEPA search exists. The v7 ledger's admission and restore fence
-are local process-level guarantees only.
+improvement or GEPA search exists. The ledger's admission, restore fence and
+request reservations are local process-level guarantees only.
 
 Issue #50: PR #49's CI run 39043199834 failed one `harbor-apps` audit. In the
 `sparse` control, a collector exec carried an earlier timestamp than the agent's

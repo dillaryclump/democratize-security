@@ -269,3 +269,14 @@ def test_trial_argv_matches_run_trial(tmp_path, monkeypatch):
     (argv,), options = calls[0]
     assert argv == SPIKE["trial_argv"](tmp_path, "nop", tmp_path / "jobs", "job-1")
     assert options["env"][SPIKE["NONCE"]] == nonce
+
+
+@pytest.mark.parametrize("harbor_reward, reward", [(1.0, 1), (0.0, 0)])
+def test_accept_trial_reward_none_accepts_harbor_float_rewards(tmp_path, harbor_reward, reward):
+    # Harbor 0.24.0 records rewards as floats in result.json.
+    trial, result, evidence = fixture(tmp_path)
+    result["verifier_result"]["rewards"]["reward"] = harbor_reward
+    (trial / "result.json").write_text(json.dumps(result))
+    sign(trial, {**evidence, "reward": reward})
+    record, _ = accept_any(tmp_path)
+    assert record["reward"] == reward
