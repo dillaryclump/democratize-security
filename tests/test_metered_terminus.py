@@ -28,17 +28,31 @@ from democratize_security.adapters.runners import metered_terminus as mt  # noqa
 class FakeBroker:
     """Answer each connection with the next scripted reply and record requests."""
 
+    live = []
+
     def __init__(self, path, replies):
         self.path, self.replies, self.requests = path, list(replies), []
+        self.stopped = threading.Event()
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(str(path))
         self.sock.listen(4)
+        self.sock.settimeout(0.05)
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+        FakeBroker.live.append(self)
+
+    def stop(self):
+        self.stopped.set()
+        self.thread.join(timeout=5)
+        self.sock.close()
 
     def _run(self):
-        while self.replies:
-            connection, _ = self.sock.accept()
+        while self.replies and not self.stopped.is_set():
+            try:
+                connection, _ = self.sock.accept()
+            except TimeoutError:
+                continue
+            connection.settimeout(None)
             with connection:
                 data = b""
                 while not data.endswith(b"\n"):
@@ -52,6 +66,14 @@ class FakeBroker:
     @property
     def accepts(self):
         return len(self.requests)
+
+
+@pytest.fixture(autouse=True)
+def stop_fake_brokers():
+    # No thread may outlive its test: later tests fork the process.
+    yield
+    while FakeBroker.live:
+        FakeBroker.live.pop().stop()
 
 
 @pytest.fixture
