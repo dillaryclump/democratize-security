@@ -411,7 +411,7 @@ def test_v6_store_requires_explicit_migration_and_preserves_bytes(case):
     assert dump(case) == before
     with open_store(case, migrate=True) as store:
         assert store._db.execute("PRAGMA user_version").fetchone() == (VERSION,)
-        assert VERSION == 7
+        assert VERSION == 8
     kept = [
         line
         for line in dump(case)
@@ -550,3 +550,67 @@ def test_recovery_state_requires_valid_known_runtime_attempt(case):
         path.write_bytes(path.read_bytes() + b" ")
         with pytest.raises(StoreError, match="missing or changed"):
             store.recovery_state("r1")
+
+
+def request_intent(revision, request_id="req-1", reserve=0):
+    return runtime(
+        "request_intent",
+        revision,
+        request_id=request_id,
+        preflight_input_tokens=1000,
+        max_output_tokens=500,
+        reserve_cents=reserve,
+        payload_sha256="5" * 64,
+    )
+
+
+def test_open_request_blocks_seal_and_new_requests_after_reopen(case):
+    with open_store(case) as store:
+        for event_id, request in (("prep", prepare(case)), ("dispatch", DISPATCH), ("ack", ACK)):
+            store.record_runtime(event_id, request)
+        store.record_runtime("req-1-intent", request_intent(3))
+    # A restarted controller sees the reservation but not whether the send happened.
+    with open_store(case) as store:
+        (state,) = store.attempts()
+        assert state["open_request"]["request_id"] == "req-1"
+        with pytest.raises(StoreError, match="open request"):
+            store.record_runtime("seal", dict(seal(case), expected_revision=4))
+        with pytest.raises(StoreError, match="open request"):
+            store.record_runtime("req-2-intent", request_intent(4, "req-2"))
+        state = store.record_runtime(
+            "req-1-unknown",
+            runtime("request_unknown", 4, request_id="req-1", reason="restart before settle"),
+        )
+        assert (state["unknown_requests"], state["input_tokens"]) == (1, 1000)
+        assert store.budget_snapshot(case["plan"]["campaign_id"])["blocked"] is True
+        with pytest.raises(StoreError, match="unknown request"):
+            store.record_runtime("req-2-intent", request_intent(5, "req-2"))
+
+
+def make_v7(case):
+    with sqlite3.connect(case["ledger"] / "ledger.sqlite3") as db:
+        db.execute("PRAGMA user_version=7")
+        return list(db.iterdump())
+
+
+def without_generations(lines):
+    return [line for line in lines if "controller_generations" not in line]
+
+
+def test_v7_offline_ledger_migrates_bytes_unchanged(case):
+    before = make_v7(case)
+    with pytest.raises(StoreError, match="Version 7 requires explicit"):
+        open_store(case)
+    assert dump(case) == before
+    with open_store(case, migrate=True) as store:
+        assert store._db.execute("PRAGMA user_version").fetchone() == (VERSION,)
+    assert without_generations(dump(case)) == without_generations(before)
+
+
+def test_v7_runtime_ledger_refuses_migration(case):
+    with open_store(case) as store:
+        store.record_runtime("prep", prepare(case))
+    before = make_v7(case)
+    with pytest.raises(StoreError, match="v7 runtime attempts cannot be migrated"):
+        open_store(case, migrate=True)
+    assert dump(case) == before

@@ -23,7 +23,7 @@ from democratize_security.evidence import MAX_EVIDENCE_BYTES
 from democratize_security.store import VERSION, PlanStore
 
 # Added schemas require reviewed object, ownership and restoration semantics.
-SUPPORTED_STORE_VERSIONS = frozenset({7})
+SUPPORTED_STORE_VERSIONS = frozenset({8})
 MAX_DATABASE_BYTES = 512 * 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_BACKUP_FILES = 100_001
@@ -174,7 +174,7 @@ def _manifest(directory):
             "restore_requires_reconciliation",
         }:
             raise BackupError("Invalid backup manifest fields")
-        if type(record["store_version"]) is int and record["store_version"] in (5, 6):
+        if type(record["store_version"]) is int and record["store_version"] in (5, 6, 7):
             raise BackupError(
                 f"Version {record['store_version']} backup requires its matching backup tool: "
                 "restore there, explicitly migrate that ledger, then create a new version "

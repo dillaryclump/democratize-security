@@ -90,7 +90,7 @@ def test_verified_roundtrip_preserves_full_ledger_references_and_unknown_cost(ca
     assert manifest == backup.verify_backup(snapshot)
     assert manifest["restore_requires_reconciliation"] is True
     assert manifest["execution_enabled"] is False
-    assert manifest["store_version"] == VERSION == 7
+    assert manifest["store_version"] == VERSION == 8
     with sqlite3.connect(snapshot / "ledger/ledger.sqlite3") as db:
         snapshot_history = generation_rows(db)
         assert historical_dump(db) == original
@@ -454,13 +454,13 @@ os._exit(69)
 def test_unknown_future_store_schemas_refuse_without_creating_destination(
     case, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(backup, "VERSION", 8)
+    monkeypatch.setattr(backup, "VERSION", 9)
     with pytest.raises(backup.BackupError, match="reviewed"):
         create(case, tmp_path / "snapshot")
     assert not (tmp_path / "snapshot").exists()
 
 
-@pytest.mark.parametrize("version", [5, 6])
+@pytest.mark.parametrize("version", [5, 6, 7])
 def test_older_backup_packages_refused_with_migration_instructions(case, tmp_path, version):
     snapshot = tmp_path / "snapshot"
     create(case, snapshot)
@@ -790,4 +790,4 @@ def test_v5_source_and_archive_require_explicit_migration_not_implicit_relabelin
     assert {path: path.read_bytes() for path in original} == original
     with open_store(case, migrate=True) as store:
         assert store.controller_generation == 1
-    assert create(case, tmp_path / "migrated-snapshot")["store_version"] == 7
+    assert create(case, tmp_path / "migrated-snapshot")["store_version"] == VERSION == 8
