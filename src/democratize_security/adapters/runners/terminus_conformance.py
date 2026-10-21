@@ -80,7 +80,25 @@ def reference_response() -> str:
     )
 
 
-class _ScriptedTerminus(Terminus2):
+class PresenceCheckedTerminus(Terminus2):
+    """Terminus2 whose tmux session must already exist in the image."""
+
+    async def setup(self, environment) -> None:
+        self._session = PresenceCheckedTmuxSession(
+            session_name=self.name(),
+            environment=environment,
+            logging_path=EnvironmentPaths.agent_dir / "terminus_2.pane",
+            local_asciinema_recording_path=None,
+            remote_asciinema_recording_path=None,
+            pane_width=self.options.tmux_pane_width,
+            pane_height=self.options.tmux_pane_height,
+            extra_env=self._extra_env,
+            user=environment.default_user,
+        )
+        await self._session.start()
+
+
+class _ScriptedTerminus(PresenceCheckedTerminus):
     SCRIPT: tuple[str, ...] = ()
 
     def __init__(self, logs_dir: Path, *args, **kwargs):
@@ -103,20 +121,6 @@ class _ScriptedTerminus(Terminus2):
         if llm_backend != SCRIPTED_BACKEND:
             raise ValueError("conformance agents only use the scripted backend")
         return ScriptedLLM(self.SCRIPT)
-
-    async def setup(self, environment) -> None:
-        self._session = PresenceCheckedTmuxSession(
-            session_name=self.name(),
-            environment=environment,
-            logging_path=EnvironmentPaths.agent_dir / "terminus_2.pane",
-            local_asciinema_recording_path=None,
-            remote_asciinema_recording_path=None,
-            pane_width=self.options.tmux_pane_width,
-            pane_height=self.options.tmux_pane_height,
-            extra_env=self._extra_env,
-            user=environment.default_user,
-        )
-        await self._session.start()
 
 
 class ScriptedReferenceTerminus(_ScriptedTerminus):

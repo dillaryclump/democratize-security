@@ -33,6 +33,11 @@ MESSAGES = [{"role": "user", "content": "Write the app."}]
 
 @pytest.fixture
 def case(tmp_path):
+    return build_case(tmp_path)
+
+
+def build_case(tmp_path):
+    """A campaign with a $10 budget whose first trial can hold a metered attempt."""
     ledger, artifact_dir, source = (tmp_path / n for n in ("ledger", "artifacts", "source"))
     for path in (ledger, artifact_dir, source):
         path.mkdir()
