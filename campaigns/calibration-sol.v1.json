@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "name": "metered-development-calibration-sol",
+  "hypothesis": "Engineering calibration only: the metered transport completes public development tasks within the approved caps. No condition comparison.",
+  "source_revision": "60c628e4c583cd9a31da3ef43ba8bc5a84c07ed2",
+  "scoring_version": "synthetic-reference-v3",
+  "model": {
+    "provider": "openai",
+    "identifier": "gpt-6.1-sol",
+    "settings": {
+      "reasoning_effort": "medium",
+      "service_tier": "default"
+    }
+  },
+  "conditions": [
+    "rls_starter"
+  ],
+  "repetitions": 1,
+  "tasks": [
+    {
+      "id": "invoice-read-dev",
+      "family": "invoice-read",
+      "split": "development",
+      "revision": "1a4ba81d2fd6f33d79761dcbb603c25eb5c66c7da0c0d50ad27499ad0a33715b"
+    },
+    {
+      "id": "invoice-search-dev",
+      "family": "invoice-search",
+      "split": "development",
+      "revision": "9c539aceb90f352cc418859b950802bd09e6ba829c2409c3dabc1d3669c4bde7"
+    },
+    {
+      "id": "invoice-export-dev",
+      "family": "invoice-export",
+      "split": "development",
+      "revision": "6000ae9bf7557d4dc9b09604e7b5b5988719ddfed3c3703d4697b9a83366bee4"
+    }
+  ],
+  "limits": {
+    "max_trials": 3,
+    "max_cost_usd_cents": 708,
+    "timeout_seconds": 1800,
+    "infrastructure_retries": 0,
+    "repair_attempts": 0,
+    "concurrency": 1
+  },
+  "stopping_rule": "Owner-approved $10 total across both calibration campaigns (#57). Stop at the first unknown request outcome, integrity error or exhausted hold; no retries."
+}

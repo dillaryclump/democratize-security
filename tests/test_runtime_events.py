@@ -181,9 +181,9 @@ def test_interrupt_from_reconciling_retains_hold_then_settle():
     assert stopped["phase"] == "interrupted"
     assert stopped["actual_cost_cents"] is None
     settled = reduce_runtime(
-        stopped, request("settle", 6, actual_cost_cents=40, receipt_id="receipt-1")
+        stopped, request("settle", 6, actual_cost_cents=0, receipt_id="receipt-1")
     )
-    assert (settled["phase"], settled["actual_cost_cents"]) == ("interrupted", 40)
+    assert (settled["phase"], settled["actual_cost_cents"]) == ("interrupted", 0)
 
 
 def test_settle_only_after_terminal():
@@ -314,3 +314,198 @@ def test_terminal_attempt_rejects_further_transitions():
     ):
         with pytest.raises(RuntimeLedgerError):
             reduce_runtime(done, item)
+
+
+def running(max_cost_cents=125):
+    prepare = dict(PREPARE, max_cost_cents=max_cost_cents)
+    return run(
+        prepare,
+        request(
+            "dispatch_intent",
+            1,
+            runner_request_id="run-1",
+            dispatch_deadline="2026-10-20T20:00:00+00:00",
+        ),
+        request("acknowledge", 2, runner_request_id="run-1", worker_id="worker-1"),
+    )
+
+
+def intent(revision, request_id="req-1", *, reserve=40, preflight=1000, max_output=500):
+    return request(
+        "request_intent",
+        revision,
+        request_id=request_id,
+        preflight_input_tokens=preflight,
+        max_output_tokens=max_output,
+        reserve_cents=reserve,
+        payload_sha256=H,
+    )
+
+
+def settle_request(revision, request_id="req-1", *, cost=3, input_tokens=900, output=200):
+    return request(
+        "request_settle",
+        revision,
+        request_id=request_id,
+        input_tokens=input_tokens,
+        cached_input_tokens=0,
+        output_tokens=output,
+        cost_cents=cost,
+        response_sha256="4" * 64,
+    )
+
+
+def unknown(revision, request_id="req-1"):
+    return request("request_unknown", revision, request_id=request_id, reason="timeout")
+
+
+def test_fresh_attempt_has_zero_request_counters():
+    state = running()
+    assert (
+        state["request_count"],
+        state["input_tokens"],
+        state["output_tokens"],
+        state["committed_cents"],
+        state["open_request"],
+        state["unknown_requests"],
+    ) == (0, 0, 0, 0, None, 0)
+
+
+def test_request_intent_settle_updates_counters():
+    reserved = reduce_runtime(running(), intent(3))
+    assert reserved["open_request"] == {
+        "request_id": "req-1",
+        "preflight_input_tokens": 1000,
+        "max_output_tokens": 500,
+        "reserve_cents": 40,
+    }
+    assert (reserved["input_tokens"], reserved["output_tokens"]) == (1000, 500)
+    assert reserved["committed_cents"] == 40
+    state = reduce_runtime(reserved, settle_request(4))
+    assert (
+        state["request_count"],
+        state["input_tokens"],
+        state["output_tokens"],
+        state["committed_cents"],
+    ) == (1, 900, 200, 3)
+    assert state["open_request"] is None
+    assert state["phase"] == "running"
+
+
+@pytest.mark.parametrize("make", [lambda: sealed(), lambda: run(PREPARE)])
+def test_request_requires_running(make):
+    state = make()
+    with pytest.raises(RuntimeLedgerError, match="not permitted from"):
+        reduce_runtime(state, intent(state["revision"]))
+
+
+def test_request_requires_single_open():
+    reserved = reduce_runtime(running(), intent(3))
+    with pytest.raises(RuntimeLedgerError, match="open request"):
+        reduce_runtime(reserved, intent(4, "req-2"))
+
+
+def test_request_reserve_cannot_exceed_hold():
+    state = reduce_runtime(running(236), intent(3, reserve=200))
+    state = reduce_runtime(state, settle_request(4, cost=200))
+    assert state["committed_cents"] == 200
+    with pytest.raises(RuntimeLedgerError, match="hold"):
+        reduce_runtime(state, intent(5, "req-2", reserve=40))
+    assert reduce_runtime(state, intent(5, "req-2", reserve=36))["committed_cents"] == 236
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"cost": 41},
+        {"input_tokens": 1001},
+        {"output": 501},
+    ],
+)
+def test_settle_exceeding_reservation_rejected(change):
+    reserved = reduce_runtime(running(), intent(3))
+    with pytest.raises(RuntimeLedgerError, match="reservation"):
+        reduce_runtime(reserved, settle_request(4, **change))
+
+
+def test_settle_and_unknown_must_name_the_open_request():
+    reserved = reduce_runtime(running(), intent(3))
+    for item in (settle_request(4, "req-9"), unknown(4, "req-9")):
+        with pytest.raises(RuntimeLedgerError, match="open request"):
+            reduce_runtime(reserved, item)
+    with pytest.raises(RuntimeLedgerError, match="open request"):
+        reduce_runtime(running(), settle_request(3))
+
+
+def test_cached_tokens_cannot_exceed_input():
+    reserved = reduce_runtime(running(), intent(3))
+    item = settle_request(4)
+    item["cached_input_tokens"] = 901
+    with pytest.raises(RuntimeLedgerError, match="cached"):
+        reduce_runtime(reserved, item)
+
+
+def test_unknown_request_keeps_maxima_and_blocks():
+    state = reduce_runtime(reduce_runtime(running(), intent(3)), unknown(4))
+    assert (state["input_tokens"], state["output_tokens"], state["committed_cents"]) == (
+        1000,
+        500,
+        40,
+    )
+    assert (state["request_count"], state["unknown_requests"]) == (1, 1)
+    assert state["open_request"] is None
+    with pytest.raises(RuntimeLedgerError, match="unknown"):
+        reduce_runtime(state, intent(5, "req-2"))
+    stopped = reduce_runtime(state, request("interrupt", 5, reason="lost response"))
+    with pytest.raises(RuntimeLedgerError, match="unknown"):
+        reduce_runtime(stopped, request("settle", 6, actual_cost_cents=40, receipt_id="r-1"))
+
+
+def test_seal_requires_no_open_request():
+    reserved = reduce_runtime(running(), intent(3))
+    with pytest.raises(RuntimeLedgerError, match="open request"):
+        reduce_runtime(
+            reserved,
+            request(
+                "seal",
+                4,
+                runner_request_id="run-1",
+                worker_id="worker-1",
+                stop_observation_sha256="3" * 64,
+                artifact_ref=ARTIFACT_REF,
+            ),
+        )
+
+
+def test_runtime_settle_must_equal_committed_cents():
+    state = reduce_runtime(reduce_runtime(running(), intent(3)), settle_request(4, cost=3))
+    stopped = reduce_runtime(state, request("interrupt", 5, reason="operator stop"))
+    with pytest.raises(RuntimeLedgerError, match="committed"):
+        reduce_runtime(stopped, request("settle", 6, actual_cost_cents=4, receipt_id="r-1"))
+    settled = reduce_runtime(stopped, request("settle", 6, actual_cost_cents=3, receipt_id="r-1"))
+    assert settled["actual_cost_cents"] == 3
+
+
+def test_interrupt_with_open_request_blocks_settle():
+    reserved = reduce_runtime(running(), intent(3))
+    stopped = reduce_runtime(reserved, request("interrupt", 4, reason="deadline"))
+    with pytest.raises(RuntimeLedgerError, match="open request"):
+        reduce_runtime(stopped, request("settle", 5, actual_cost_cents=40, receipt_id="r-1"))
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("reserve_cents", -1),
+        ("reserve_cents", True),
+        ("preflight_input_tokens", 0),
+        ("max_output_tokens", 0),
+        ("payload_sha256", "x"),
+        ("request_id", "bad id"),
+    ],
+)
+def test_bad_request_intent_values_rejected(field, value):
+    item = intent(3)
+    item[field] = value
+    with pytest.raises(RuntimeLedgerError):
+        reduce_runtime(running(), item)

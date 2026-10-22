@@ -29,7 +29,7 @@ from democratize_security.runtime_auth import (
 from democratize_security.runtime_events import MODE as RUNTIME_MODE
 from democratize_security.runtime_events import RuntimeLedgerError, reduce_runtime
 
-VERSION = 7
+VERSION = 8
 APPLICATION_ID = 0x44534C31
 MAX_PLAN_BYTES = 16 * 1024 * 1024
 SCHEMA = {
@@ -197,6 +197,10 @@ for _table in ("runtime_results", "restore_fences", "restore_reconciliations"):
         )
 
 
+# Store v8 changes only the runtime event contract (per-request reservations).
+V7_SCHEMA = dict(SCHEMA)
+
+
 class StoreError(ValueError):
     """The ledger cannot be safely used."""
 
@@ -341,7 +345,7 @@ class PlanStore:
             application = self._db.execute("PRAGMA application_id").fetchone()[0]
             objects = self._schema()
             fresh = version == 0 and application == 0 and not objects
-            legacy = version in (1, 2, 3, 4, 5, 6) and application == APPLICATION_ID
+            legacy = version in (1, 2, 3, 4, 5, 6, 7) and application == APPLICATION_ID
             old_schema = {
                 1: V1_SCHEMA,
                 2: V2_SCHEMA,
@@ -349,11 +353,12 @@ class PlanStore:
                 4: V4_SCHEMA,
                 5: V5_SCHEMA,
                 6: V6_SCHEMA,
+                7: V7_SCHEMA,
             }.get(version, SCHEMA)
             if legacy and not migrate:
                 raise StoreError(f"Version {version} requires explicit migrate=True")
             if not fresh and (
-                version not in (1, 2, 3, 4, 5, 6, VERSION) or application != APPLICATION_ID
+                version not in (1, 2, 3, 4, 5, 6, 7, VERSION) or application != APPLICATION_ID
             ):
                 raise StoreError("Unknown ledger version or application; no automatic migration")
             if not fresh and objects != old_schema:
@@ -390,15 +395,21 @@ class PlanStore:
                 raise StoreError("Ledger contains orphan records")
             for (campaign_id,) in self._db.execute("SELECT campaign_id FROM campaigns").fetchall():
                 self.snapshot(campaign_id)
+            if legacy and version == 7:
+                # v7 runtime projections lack the v8 request counters; none exist
+                # outside tests, so refuse rather than rewrite their history.
+                for (encoded,) in self._db.execute("SELECT state_json FROM attempts"):
+                    if json.loads(encoded).get("mode") == RUNTIME_MODE:
+                        raise StoreError("v7 runtime attempts cannot be migrated")
             if legacy and version >= 2:
                 self.attempts()  # Reject corrupt accounting before changing the schema.
             if legacy and version >= 3:
                 self.artifact_bindings()  # Validate old objects before migration commits.
             if legacy and version == 4:
                 self._read_evidence_bindings([])  # Do not invent intents for v4 observations.
-            if legacy and version in (5, 6):
+            if legacy and version in (5, 6, 7):
                 self.evidence_bindings()  # Validate intents and evidence before migration.
-            if legacy and version == 6:
+            if legacy and version in (6, 7):
                 self._generation_tip()  # Validate ownership history before migration.
             if legacy:
                 self._db.execute("BEGIN IMMEDIATE")

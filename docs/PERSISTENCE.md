@@ -6,7 +6,8 @@ The external recovery engine remains unimplemented. Issue #48 adds a standalone
 pure policy for synthetic recovery observations; see [RECOVERY.md](RECOVERY.md).
 It returns inspection advice without changing store state or enabling execution.
 Store v6 adds durable controller generations and write fencing (issue #53),
-described below. Store v7 (issue #62) adds the runtime attempt lifecycle,
+described below. Store v8 (issue #69) adds per-model-request reservations to
+that lifecycle. Store v7 (issue #62) adds the runtime attempt lifecycle,
 authenticated result admission and restore fences in the same ledger; no
 dispatcher or runner is connected to it.
 Integration #33 merged at
@@ -46,7 +47,7 @@ open. Do not rename, unlink or replace the live directory/lock/database. Never
 share one open instance across forked processes or use network filesystems.
 Close the context to release ownership. Unknown versions or schema differences
 refuse to open. Version 1 stores require explicit `migrate=True` to upgrade to
-version 7; versions 2, 3, 4, 5 and 6 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
+version 8; versions 2, 3, 4, 5, 6 and 7 also require explicit migration. No other upgrade is supported. Plans are limited to 16 MiB canonical JSON.
 
 Version 1 had only campaigns, immutable planned trials and import events at
 sequence zero. Version 2 adds the bounded accounting API below. It still has no
@@ -365,8 +366,8 @@ backup takes ownership and appends one source generation, then snapshots that
 complete history coherently. Package verification and restoration validate only
 private scratch database copies; frozen/restored bytes and history remain exact
 until the restored store is deliberately opened. Rehashed generation corruption
-still rejects the package. Store v7 replaces this with v7-only backups whose
-restores carry a durable restore fence; see the version 7 section below.
+still rejects the package. Later stores use version-specific backups whose
+restores carry a durable restore fence; see the version 7 and 8 sections below.
 
 Upgrade existing v5 stores only with `PlanStore(directory, migrate=True, ...)`,
 providing their artifact/evidence directories. Before adding the generation table
@@ -447,6 +448,32 @@ stale challenges, tampered artifacts and envelopes, incomplete coverage, mixed
 histories, migration and the recovery projection, including a lost acknowledgement
 that never yields resubmission. These are local process-level guarantees; no live
 runner, provider receipt or power-loss behavior is proven.
+
+## Per-model-request reservations (version 8, issue #69)
+
+Store v8 changes only the runtime event contract; its tables equal v7's. While
+an attempt is `running`, three actions meter each model request:
+
+| Action | Effect |
+| --- | --- |
+| `request_intent` | Reserve one request: exact preflight input tokens, output cap and `reserve_cents`. Requires no open request, no unknown request, and the attempt's `committed_cents` plus the reserve within its `max_cost_cents` hold |
+| `request_settle` | Replace that reservation with the settled input, cached input, output and `cost_cents`, each no larger than reserved |
+| `request_unknown` | Keep the reserved maxima, clear the open request and count an unknown outcome |
+
+Attempt state carries `request_count`, cumulative `input_tokens`,
+`output_tokens`, `committed_cents`, `open_request` and `unknown_requests`.
+`seal` requires no open request. A runtime `settle` requires no open or unknown
+request and must equal `committed_cents`. An unknown request therefore blocks
+further requests and keeps the attempt's whole hold unsettled. A controller that
+restarts with an open request records it unknown, never resends it.
+`model_meter.Meter` persists the intent before any send; see
+[CALIBRATION.md](CALIBRATION.md).
+
+v7 ledgers migrate with `migrate=True` only if they hold no runtime attempts
+(none existed outside tests); their offline history bytes are unchanged.
+Backups support only v8. `tests/test_runtime_events.py`,
+`tests/test_runtime_store.py` and `tests/test_model_meter.py` cover the request
+rules, reopen with an open request and the migration guard.
 
 ## Scope and invariants
 
