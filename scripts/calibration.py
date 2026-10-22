@@ -374,11 +374,6 @@ def dry_run() -> list[dict]:
 
 
 def live(key_file: Path, ledger: Path) -> list[dict]:
-    from democratize_security.adapters.providers.openai_responses import (
-        OpenAIResponsesProvider,
-        load_key,
-    )
-
     if os.environ.get("DS_WORKER_HOST_REQUIRED") != "1":
         raise SystemExit("live calibration requires DS_WORKER_HOST_REQUIRED=1")
     # The key comes only from --key-file; the replay Harbor run inherits os.environ.
@@ -394,6 +389,12 @@ def live(key_file: Path, ledger: Path) -> list[dict]:
         ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True
     ).stdout.strip():
         raise SystemExit("live calibration requires a clean checkout")
+    # Imported only after every refusal check: httpx is not a core dependency.
+    from democratize_security.adapters.providers.openai_responses import (
+        OpenAIResponsesProvider,
+        load_key,
+    )
+
     provider = OpenAIResponsesProvider(load_key(key_file))
     OUTPUT.mkdir(parents=True, exist_ok=True)
     objects_dir = ledger.parent / "objects"
