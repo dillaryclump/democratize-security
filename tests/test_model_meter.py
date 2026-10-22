@@ -188,6 +188,8 @@ def test_send_failure_after_intent_records_unknown_and_latches(case):
         {"status": "incomplete"},
         {"usage": None},
         {"model": "gpt-6-luna"},
+        {"model": "gpt-6.1-sol-pro"},
+        {"model": "gpt-6.1-sol-2026-10-01-x"},
         {"usage": Usage(1000, 0, 0, 25001)},
         {"usage": Usage(1001, 0, 0, 10)},
     ],

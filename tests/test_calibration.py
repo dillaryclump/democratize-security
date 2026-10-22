@@ -149,3 +149,13 @@ def test_summary_json_is_plain(tmp_path):
     data = json.loads(path.read_text())
     assert data["trials"] == [record] and data["mode"] == "dry-run"
     assert data["approved_cap_cents"] == 1000
+
+
+def test_scrub_credentials_removes_them_from_this_process(monkeypatch):
+    for name in ("OPENAI_API_KEY", "FOO_API_KEY", "GH_TOKEN", "ANTHROPIC_X"):
+        monkeypatch.setenv(name, "secret")
+    monkeypatch.setenv("KEEP_ME", "1")
+    calibration.scrub_credentials()
+    # harbor_spike.run_trial (the sealed replay) inherits os.environ directly.
+    assert not any(value == "secret" for value in calibration.os.environ.values())
+    assert calibration.os.environ["KEEP_ME"] == "1"

@@ -9,6 +9,7 @@ the standard library and the project's own contracts.
 """
 
 import hashlib
+import re
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Protocol
@@ -211,7 +212,11 @@ class Meter:
     def _validated(self, result, preflight: int, max_output: int) -> Usage:
         if type(result) is not ProviderResult or type(result.content) is not str:
             raise ProviderError("invalid provider result")
-        if result.status != "completed" or not result.model.startswith(self._rate.model):
+        # Exactly the requested model or its dated snapshot; never a pricier sibling.
+        snapshot = re.fullmatch(
+            re.escape(self._rate.model) + r"(-\d{4}-\d{2}-\d{2})?", result.model
+        )
+        if result.status != "completed" or snapshot is None:
             raise ProviderError("incomplete response or unexpected model")
         usage = result.usage
         if type(usage) is not Usage:

@@ -87,13 +87,19 @@ def rate_and_limits(campaign: dict):
     return rate, TrialLimits(**load_json(PROPOSAL)["limits"])
 
 
+def _credential(name: str) -> bool:
+    return name.startswith(SECRET_PREFIXES) or name.endswith(SECRET_SUFFIXES)
+
+
+def scrub_credentials() -> None:
+    """Drop credential-like variables from this process; every child inherits less."""
+    for name in [name for name in os.environ if _credential(name)]:
+        del os.environ[name]
+
+
 def harbor_env(socket_path: Path) -> dict:
     """Host environment for `harbor run`, minus every credential-like variable."""
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if not name.startswith(SECRET_PREFIXES) and not name.endswith(SECRET_SUFFIXES)
-    }
+    env = {name: value for name, value in os.environ.items() if not _credential(name)}
     env[SOCKET_ENV] = str(socket_path)
     return env
 
@@ -375,6 +381,8 @@ def live(key_file: Path, ledger: Path) -> list[dict]:
 
     if os.environ.get("DS_WORKER_HOST_REQUIRED") != "1":
         raise SystemExit("live calibration requires DS_WORKER_HOST_REQUIRED=1")
+    # The key comes only from --key-file; the replay Harbor run inherits os.environ.
+    scrub_credentials()
     campaigns = {name: load_campaign(path) for name, path in CAMPAIGNS.items()}
     if sum(c["limits"]["max_cost_usd_cents"] for c in campaigns.values()) > APPROVED_CENTS:
         raise SystemExit("campaign caps exceed the approved budget")
