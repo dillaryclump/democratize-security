@@ -374,6 +374,11 @@ def verify(client, runtime_dsn: str, *, fixture: str, dataset: dict = GRADING) -
             not_found(patch(foreign_id, {"description": "Hijacked"})), "Foreign update allowed"
         )
         _require(not_found(patch(999999, {"description": "Missing"})), "Missing update differs")
+        for hint_headers, _ in hints(alice):
+            _require(
+                not_found(patch(foreign_id, {"description": "Hijacked"}, alice, hint_headers)),
+                "Client tenant input allowed a foreign update",
+            )
         _require(
             _json(get(f"/invoices/{foreign_id}", bob)) == before_foreign,
             "Foreign update changed another tenant's invoice",
