@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -170,6 +171,16 @@ def _finish(store, attempt_id, record, reason=None):
     return record
 
 
+def attempt_name(model: str, family: str) -> str:
+    """Attempt identity; also the job-name stem, so it obeys the worker helper."""
+    return re.sub(r"[^a-z0-9_-]", "-", f"cal-{model}-{family}".lower())
+
+
+def job_names(attempt_id: str) -> tuple[str, str]:
+    """Generation and sealed-replay Harbor job names for one attempt."""
+    return f"{attempt_id}-gen", f"{attempt_id}-replay"
+
+
 def run_trial(
     store,
     plan,
@@ -184,7 +195,8 @@ def run_trial(
 ):
     """Run one calibration trial through the full lifecycle; return its summary."""
     family = trial["family"]
-    attempt_id = f"cal-{rate.model}-{family}"
+    attempt_id = attempt_name(rate.model, family)
+    job, replay_job = job_names(attempt_id)
     record = {"attempt_id": attempt_id, "model": rate.model, "family": family, "outcome": None}
     workdir.mkdir(parents=True, exist_ok=True)
     task = workdir / f"{attempt_id}-task"
@@ -213,7 +225,6 @@ def run_trial(
             "config_sha256": digest(config),
         },
     )
-    job = f"{attempt_id}-gen"
     deadline = datetime.now(UTC) + TRIAL_DEADLINE
     state = _event(
         store,
@@ -304,7 +315,6 @@ def run_trial(
             max_bytes=harbor_apps.MAX_APP_BYTES,
             trusted_files=APP_TRUSTED_FILES,
         )
-        replay_job = f"{attempt_id}-replay"
         replay_nonce = harbor_spike.run_trial(replay, "nop", workdir, replay_job)
         replayed, _ = harbor_spike.accept_trial(
             workdir / replay_job,
