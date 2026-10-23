@@ -159,3 +159,16 @@ def test_scrub_credentials_removes_them_from_this_process(monkeypatch):
     # harbor_spike.run_trial (the sealed replay) inherits os.environ directly.
     assert not any(value == "secret" for value in calibration.os.environ.values())
     assert calibration.os.environ["KEEP_ME"] == "1"
+
+
+def test_job_names_satisfy_the_worker_helper():
+    # scripts/worker_host.py refuses any other name before mounting job storage.
+    import re
+
+    for path in calibration.CAMPAIGNS.values():
+        campaign = load_campaign(path)
+        rate, _ = calibration.rate_and_limits(campaign)
+        for task in campaign["tasks"]:
+            attempt = calibration.attempt_name(rate.model, task["family"])
+            for job in calibration.job_names(attempt):
+                assert re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", job), job
