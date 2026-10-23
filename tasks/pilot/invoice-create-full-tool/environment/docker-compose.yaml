@@ -1,0 +1,84 @@
+# Reviewed agent hardening. Harbor 0.24.0 merges this after its resources and
+# build files and before its env, mounts and egress overlays, none of which set
+# these keys. Harbor keeps main off its egress sidecar only when network_mode is
+# a literal key here: do not move it into `extends:` or use `!reset`/`!override`.
+# Set no [agent] user in task.toml; Harbor's `exec -u` would override `user` here.
+services:
+  main:
+    network_mode: "none"
+    # A uid unlike common host users: an owner may chmod the shared verifier
+    # log directory without any capability.
+    user: "10001:10001"
+    # Reap exited processes; Harbor's PID 1 is `sleep infinity`.
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=160m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    # Harbor exports MEMORY and sets mem_limit from task.toml; no extra swap.
+    memswap_limit: ${MEMORY:?Harbor must export MEMORY}
+    # Container logs are host files, and the agent can write to its init's
+    # stdout: keep at most one 1 MiB file.
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "1"}
+    # The image's entrypoint seeds the starter into the submission volume.
+    # Harbor's `up --wait` holds the agent until this passes; after that the
+    # next probe is a day away.
+    healthcheck:
+      test: ["CMD", "test", "-e", "/tmp/.seeded"]
+      interval: 24h
+      timeout: 5s
+      retries: 1
+      start_period: 60s
+      start_interval: 1s
+    # Size-bounded tmpfs volumes, freed with the trial. The submission lives in
+    # a named volume so the collector can read it; Harbor uploads the oracle's
+    # solution into the root-owned one.
+    volumes:
+      - candidate:/candidate
+      - solution:/solution
+  # Trusted collector. After Harbor stops main, a [[verifier.collect]] hook
+  # copies the one allowlisted artifact here as a checked regular file; only
+  # that copy leaves the agent environment. It runs as the agent's uid so it
+  # can read what the agent wrote, but sees the agent's files read-only.
+  collector:
+    build:
+      context: .
+      dockerfile: collector.Dockerfile
+    network_mode: "none"
+    user: "10001:10001"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 16
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 1
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "1"}
+    # Harbor collects the checked copy from its own bounded output volume.
+    volumes:
+      - candidate:/agent-candidate:ro
+      - collected:/candidate
+    command: ["sleep", "infinity"]
+volumes:
+  candidate:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,nr_inodes=4096,mode=0755,uid=10001,gid=10001,nosuid,nodev"
+  solution:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,nr_inodes=4096,mode=0755,nosuid,nodev"
+  collected:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1m,nr_inodes=64,mode=0755,uid=10001,gid=10001,nosuid,nodev,noexec"

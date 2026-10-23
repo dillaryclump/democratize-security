@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 from democratize_security.runtime_auth import sign_report
-from democratize_security.verification.report import PROTOCOL, REQUIRED, Check, summarize
+from democratize_security.verification.report import PROTOCOLS, Check, summarize
 
 MAX_DETAIL_CHARACTERS = 2048
 OUTCOMES = frozenset({"pass", "fail", "not_evaluated"})
@@ -31,20 +31,23 @@ class SignerError(RuntimeError):
 def report_from_app_evidence(evidence: dict) -> dict:
     """The verifier report equivalent to bound app evidence; reject any mismatch."""
     checks, details = evidence.get("checks"), evidence.get("details")
+    protocol = evidence.get("protocol")
     if (
-        evidence.get("protocol") != PROTOCOL
+        not isinstance(protocol, str)
+        or protocol not in PROTOCOLS
         or not isinstance(checks, dict)
         or not isinstance(details, dict)
     ):
         raise ValueError("unsupported app evidence")
-    unknown = set(checks) - REQUIRED
+    unknown = set(checks) - PROTOCOLS[protocol]
     if unknown or any(outcome not in OUTCOMES for outcome in checks.values()):
         raise ValueError("app evidence has unknown checks or outcomes")
     report = summarize(
         [
             Check(name, checks[name], str(details.get(name, ""))[:MAX_DETAIL_CHARACTERS])
             for name in sorted(checks)
-        ]
+        ],
+        protocol,
     )
     if report["coverage"] != evidence.get("coverage"):
         raise ValueError("app evidence coverage disagrees with its checks")

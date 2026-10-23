@@ -1,0 +1,11 @@
+{
+  "max_requests": 12,
+  "max_input_tokens_per_request": 64000,
+  "max_output_tokens_per_request": 8000,
+  "max_total_input_tokens": 200000,
+  "max_total_output_tokens": 40000,
+  "agent_timeout_seconds": 900,
+  "verifier_timeout_seconds": 300,
+  "infrastructure_retries": 0,
+  "repair_attempts": 0
+}

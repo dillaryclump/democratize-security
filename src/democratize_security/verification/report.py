@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 
 PROTOCOL = "synthetic-reference-v3"
+PROTOCOL_V4 = "synthetic-reference-v4"
 REQUIRED = frozenset(
     {
         "database_configuration",
@@ -16,6 +17,23 @@ REQUIRED = frozenset(
     }
 )
 
+# v4 (pilot): fixture_configuration replaces database_configuration and checks
+# the variant's intended fixture; aggregates and writes cover the new endpoints.
+ORDER_V4 = (
+    "fixture_configuration",
+    "authorized_reads",
+    "foreign_reads",
+    "list_search",
+    "exports",
+    "identity",
+    "spoofing",
+    "tenant_switching",
+    "aggregates",
+    "writes",
+)
+REQUIRED_V4 = frozenset(ORDER_V4)
+PROTOCOLS = {PROTOCOL: REQUIRED, PROTOCOL_V4: REQUIRED_V4}
+
 
 @dataclass(frozen=True)
 class Check:
@@ -24,16 +42,19 @@ class Check:
     detail: str = ""
 
 
-def summarize(checks: list[Check]) -> dict:
+def summarize(checks: list[Check], protocol: str = PROTOCOL) -> dict:
+    if protocol not in PROTOCOLS:
+        raise ReportError("Unsupported verifier protocol")
+    required = PROTOCOLS[protocol]
     ids = [check.id for check in checks]
     complete = (
-        set(ids) == REQUIRED
-        and len(ids) == len(REQUIRED)
+        set(ids) == required
+        and len(ids) == len(required)
         and all(c.outcome in {"pass", "fail"} for c in checks)
     )
     return {
         "schema_version": 1,
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "coverage": "complete" if complete else "incomplete",
         "outcome": ("pass" if all(c.outcome == "pass" for c in checks) else "fail")
         if complete
@@ -58,10 +79,11 @@ def validate_report(report: dict) -> None:
         raise ReportError("Invalid report envelope")
     if type(report["schema_version"]) is not int or report["schema_version"] != 1:
         raise ReportError("Unsupported report schema")
-    if report["protocol"] != PROTOCOL:
+    if not isinstance(report["protocol"], str) or report["protocol"] not in PROTOCOLS:
         raise ReportError("Unsupported verifier protocol")
     checks = report["checks"]
-    if not isinstance(checks, list) or len(checks) > len(REQUIRED):
+    required = PROTOCOLS[report["protocol"]]
+    if not isinstance(checks, list) or len(checks) > len(required):
         raise ReportError("Invalid check count")
     seen = set()
     parsed = []
@@ -69,7 +91,7 @@ def validate_report(report: dict) -> None:
         if not isinstance(check, dict) or set(check) != {"id", "outcome", "detail"}:
             raise ReportError("Invalid check record")
         identifier, outcome, detail = check["id"], check["outcome"], check["detail"]
-        if not isinstance(identifier, str) or identifier not in REQUIRED or identifier in seen:
+        if not isinstance(identifier, str) or identifier not in required or identifier in seen:
             raise ReportError("Unknown or duplicate check")
         if not isinstance(outcome, str) or outcome not in {"pass", "fail", "not_evaluated"}:
             raise ReportError("Invalid check outcome")
@@ -77,5 +99,5 @@ def validate_report(report: dict) -> None:
             raise ReportError("Check detail exceeds byte limit")
         seen.add(identifier)
         parsed.append(Check(identifier, outcome, detail))
-    if report != summarize(parsed):
+    if report != summarize(parsed, report["protocol"]):
         raise ReportError("Coverage or outcome disagrees with required checks")

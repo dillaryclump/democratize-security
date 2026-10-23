@@ -71,6 +71,13 @@ work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
   `recovery_state` projects validated attempts onto recovery advice. No runner,
   dispatcher or provider is connected. See [PERSISTENCE.md](PERSISTENCE.md) and
   ADR 0007.
+- M4 pilot (#57, branch `milestone/pilot-conditions`):
+  - 24 generated variants in `tasks/pilot/` cover 6 families × 4 conditions, graded by protocol v4.
+  - `ordinary` and `instructions` run against a plain database, so only the agent's code isolates tenants. `rls_starter` and `full_tool` run against forced RLS.
+  - `full_tool` adds `check-isolation`, a private-PostgreSQL self-check on development data inside the network-less agent container.
+  - Model-free Harbor controls cover every variant. The pilot runner (`scripts/pilot.py`) reuses the metered v8 lifecycle; its dry run admitted a v4 pass/complete result.
+  - The protocol is pre-registered in [PILOT_PROTOCOL.md](PILOT_PROTOCOL.md). The owner approved a $15 hard cap on gpt-6.1-sol. No live pilot request yet.
+  - Calibration (2026-10-23): 6/6 pass/complete for 27¢ (upper bound).
 - On #69: store v8 meters every model request of a runtime attempt (durable
   intent before one retry-free send, upper-bound settlement, unknown outcomes keep
   their hold and stop the batch). A controller-side broker serves Harbor's
@@ -108,9 +115,9 @@ preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
 
 ## Next bounded work
 
-1. Run the owner-approved $10 calibration on the dedicated worker (#69,
-   [CALIBRATION.md](CALIBRATION.md)) and re-estimate the pilot from its measured
-   usage. Any spend beyond $10 needs a new owner approval.
+1. Run the pilot controls and the 48-trial pilot on the dedicated worker under the
+   approved $15 cap ([PILOT_PROTOCOL.md](PILOT_PROTOCOL.md)), then report all
+   scheduled trials with `scripts/pilot_report.py`.
 2. Build the remaining pilot conditions and task families on the conformant
    Terminus2 transport (#63). Do not manufacture accepted results from the
    offline evidence APIs.

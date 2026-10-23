@@ -46,6 +46,44 @@ def database():
 
 
 @pytest.fixture
+def pilot_database():
+    """Factory: a disposable pilot database for one fixture variant and dataset."""
+    dsn = os.environ.get("TEST_POSTGRES_ADMIN_DSN")
+    if not dsn:
+        if os.environ.get("REQUIRE_POSTGRES_TESTS") == "1":
+            pytest.fail("TEST_POSTGRES_ADMIN_DSN is required in the integration gate")
+        pytest.skip("Set TEST_POSTGRES_ADMIN_DSN for disposable PostgreSQL integration tests")
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    from democratize_security.pilot import fixture as pilot_fixture
+
+    created = []
+
+    def make(kind, dataset=None):
+        name = "ds_pilot_" + uuid.uuid4().hex
+        role = name + "_runtime"
+        password = secrets.token_hex(24)
+        created.append((name, role))
+        setup_dsn = pilot_fixture.provision(
+            dsn, name, role, password, fixture=kind, dataset=dataset or pilot_fixture.GRADING
+        )
+        settings = conninfo_to_dict(setup_dsn)
+        settings.update(user=role, password=password)
+        return SimpleNamespace(admin=setup_dsn, runtime=make_conninfo(**settings), role=role)
+
+    yield make
+    with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as admin:
+        for name, role in created:
+            # Only this fixture's random databases and roles are targeted.
+            admin.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
+            )
+            admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+
+@pytest.fixture
 def serve(tmp_path):
     @contextmanager
     def start(runtime_dsn, app_file=None):

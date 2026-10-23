@@ -1,0 +1,58 @@
+# Reviewed verifier hardening for Harbor 0.24.0's separate verifier, which uses
+# this directory as its environment and merges it like the agent's file. Keep
+# network_mode a literal key and set no [verifier] user in task.toml (see the
+# agent's environment/docker-compose.yaml).
+services:
+  main:
+    network_mode: "none"
+    # The image's postgres user, numeric so the audit can prove the app's
+    # uid differs.
+    user: "999:999"
+    # Reap the daemonized postmaster's children; Harbor's PID 1 is `sleep infinity`.
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop: [ALL]
+    # Only for Harbor's root housekeeping: emptying the shared verifier log
+    # directory and fixing host ownership must not fail silently.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    memswap_limit: ${MEMORY:?Harbor must export MEMORY}
+    # Container logs are host files, and the candidate app writes to its
+    # own stdout: every service keeps at most one 1 MiB file.
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "1"}
+    # Harbor uploads the collected app here; the verifier publishes its
+    # validated copy and the runtime DSN for the app container.
+    volumes:
+      - candidate:/candidate
+  # Candidate code runs here, never in main: no logs, nonce, verifier code or
+  # superuser socket. It shares only main's loopback-only network namespace.
+  app:
+    build:
+      context: .
+      dockerfile: app.Dockerfile
+    network_mode: "service:main"
+    user: "20001:20001"
+    init: true
+    read_only: true
+    # The same bounded, non-executable scratch space the agent gets.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "1"}
+    volumes:
+      - candidate:/candidate:ro
+    command: ["/opt/app/bin/python", "-I", "/opt/launch.py"]
+volumes:
+  candidate:

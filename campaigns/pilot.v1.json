@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "name": "m4-pilot-four-conditions",
+  "hypothesis": "The full integration (RLS starter, security instructions and an isolation self-check) raises joint functional and security success over ordinary prompts, security instructions alone and an RLS starter alone.",
+  "source_revision": "1f83ca66a9de8df13c45e82b7b9832b7acf6fa42",
+  "scoring_version": "synthetic-reference-v4",
+  "model": {
+    "provider": "openai",
+    "identifier": "gpt-6.1-sol",
+    "settings": {
+      "reasoning_effort": "medium",
+      "service_tier": "default",
+      "order_seed": 20261023
+    }
+  },
+  "conditions": [
+    "ordinary",
+    "instructions",
+    "rls_starter",
+    "full_tool"
+  ],
+  "repetitions": 2,
+  "tasks": [
+    {
+      "id": "invoice-read-pilot",
+      "family": "invoice-read",
+      "split": "development",
+      "revision": "b7c753988ed118be96bb11072726250160ce0e070215d26e96c7b6f89497a2c9"
+    },
+    {
+      "id": "invoice-search-pilot",
+      "family": "invoice-search",
+      "split": "development",
+      "revision": "d0982c2eb52060cff2502516ab536ba7878db0c303c31dfec6658f810b7cd71a"
+    },
+    {
+      "id": "invoice-export-pilot",
+      "family": "invoice-export",
+      "split": "development",
+      "revision": "babf62e42549386209794ee5f96dd2d056d284e94566759026dc563bf00b8140"
+    },
+    {
+      "id": "invoice-update-pilot",
+      "family": "invoice-update",
+      "split": "development",
+      "revision": "8b0f30d0dda3cc1b6c7a95d485b079c561adeebe11d1f4e96fafb24cad323c4f"
+    },
+    {
+      "id": "invoice-create-pilot",
+      "family": "invoice-create",
+      "split": "development",
+      "revision": "9bfa897aa2e3951321c04d456f07a95a2d843ac8d7b3c7c26e79dba92c878da6"
+    },
+    {
+      "id": "invoice-summary-pilot",
+      "family": "invoice-summary",
+      "split": "development",
+      "revision": "5ca30c687ea790bde90bcfd6c61fe5d780c7e10c88649adbfbc2095196db8b93"
+    }
+  ],
+  "limits": {
+    "max_trials": 48,
+    "max_cost_usd_cents": 1500,
+    "timeout_seconds": 1800,
+    "infrastructure_retries": 0,
+    "repair_attempts": 0,
+    "concurrency": 1
+  },
+  "stopping_rule": "Owner-approved 1500-cent hard model-only cap (#57). Seeded, repetition-balanced order; stop at the first unknown request outcome or integrity error, or when less than one trial hold remains; no retries or repairs. All scheduled trials are reported per docs/PILOT_PROTOCOL.md."
+}

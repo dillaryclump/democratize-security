@@ -1,0 +1,6 @@
+{
+  "family": "invoice-create",
+  "condition": "rls_starter",
+  "fixture": "protected",
+  "protocol": "synthetic-reference-v4"
+}

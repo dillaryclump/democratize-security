@@ -36,6 +36,14 @@ PARENTS = {
     "terminus-conformance",
     "calibration",
     "calibration-dry-run",
+    "pilot",
+    "pilot-dry-run",
+    "pilot-controls/invoice-read",
+    "pilot-controls/invoice-search",
+    "pilot-controls/invoice-export",
+    "pilot-controls/invoice-update",
+    "pilot-controls/invoice-create",
+    "pilot-controls/invoice-summary",
 }
 
 
