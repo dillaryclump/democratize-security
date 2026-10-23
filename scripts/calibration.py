@@ -192,15 +192,24 @@ def run_trial(
     reasoning_effort,
     workdir: Path,
     launch=launch_harbor,
+    task_source: Path | None = None,
+    attempt_id: str | None = None,
+    protocol: str = PROTOCOL,
+    trusted_files: tuple[str, ...] = APP_TRUSTED_FILES,
 ):
-    """Run one calibration trial through the full lifecycle; return its summary."""
+    """Run one trial through the full lifecycle; return its summary.
+
+    Calibration uses the defaults; the pilot passes its variant directory,
+    attempt identity, protocol v4 and the variant's trusted replay files.
+    """
     family = trial["family"]
-    attempt_id = attempt_name(rate.model, family)
+    source = task_source or TASKS / family
+    attempt_id = attempt_id or attempt_name(rate.model, family)
     job, replay_job = job_names(attempt_id)
     record = {"attempt_id": attempt_id, "model": rate.model, "family": family, "outcome": None}
     workdir.mkdir(parents=True, exist_ok=True)
     task = workdir / f"{attempt_id}-task"
-    terminus_conformance.prepare_terminus_task(TASKS / family, task)
+    terminus_conformance.prepare_terminus_task(source, task)
     config = {
         "limits": limits.__dict__,
         "model": rate.model,
@@ -220,8 +229,8 @@ def run_trial(
             "basis_sha256": digest(plan),
             "source_revision": _source_revision(),
             "task_revision": trial["task_revision"],
-            "verifier_sha256": task_tree_sha256(TASKS / family / "tests"),
-            "protocol": PROTOCOL,
+            "verifier_sha256": task_tree_sha256(source / "tests"),
+            "protocol": protocol,
             "config_sha256": digest(config),
         },
     )
@@ -309,11 +318,11 @@ def run_trial(
         replay = workdir / f"{attempt_id}-replay-task"
         prepare_replay(
             bundle,
-            TASKS / family,
+            source,
             replay,
             artifact="app.py",
             max_bytes=harbor_apps.MAX_APP_BYTES,
-            trusted_files=APP_TRUSTED_FILES,
+            trusted_files=trusted_files,
         )
         replay_nonce = harbor_spike.run_trial(replay, "nop", workdir, replay_job)
         replayed, _ = harbor_spike.accept_trial(

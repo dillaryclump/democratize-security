@@ -1,11 +1,15 @@
 """Pilot plain/protected fixtures on disposable PostgreSQL (protocol v4)."""
 
-import psycopg
 import pytest
 
-from democratize_security.pilot import fixture as pilot_fixture
-from democratize_security.pilot import verify as pilot_verify
-from democratize_security.verification.report import PROTOCOL_V4, REQUIRED_V4
+pytest.importorskip("httpx")
+pytest.importorskip("psycopg")
+
+import psycopg  # noqa: E402
+
+from democratize_security.pilot import fixture as pilot_fixture  # noqa: E402
+from democratize_security.pilot import verify as pilot_verify  # noqa: E402
+from democratize_security.verification.report import PROTOCOL_V4, REQUIRED_V4  # noqa: E402
 
 
 def runtime(dsn, organization=None):
@@ -16,6 +20,9 @@ def runtime(dsn, organization=None):
 
 
 def test_verifier_constants_match_report_contract():
+    from democratize_security.verification.report import ORDER_V4
+
+    assert pilot_verify.ORDER == ORDER_V4
     assert pilot_verify.PROTOCOL == PROTOCOL_V4
     assert frozenset(pilot_verify.ORDER) == REQUIRED_V4
     assert pilot_verify.ORDER[-1] == "writes"

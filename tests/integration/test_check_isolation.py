@@ -1,12 +1,15 @@
 """The full_tool self-check on disposable PostgreSQL with the development dataset."""
 
-import os
-
 import pytest
 
-from democratize_security.pilot import CONTROLS, HERE
-from democratize_security.pilot import check_isolation as tool
-from democratize_security.pilot.fixture import DEVELOPMENT, GRADING
+pytest.importorskip("httpx")
+pytest.importorskip("psycopg")
+
+import os  # noqa: E402
+
+from democratize_security.pilot import CONTROLS, HERE  # noqa: E402
+from democratize_security.pilot import check_isolation as tool  # noqa: E402
+from democratize_security.pilot.fixture import DEVELOPMENT, GRADING  # noqa: E402
 
 GRADING_VALUES = [row[2] for row in GRADING["invoices"]] + [
     str(row[3]) for row in GRADING["invoices"]

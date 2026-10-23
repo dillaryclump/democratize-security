@@ -128,7 +128,7 @@ jobs:
         run: uv run --locked --group harbor python scripts/terminus_conformance.py
   metered-dry-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       REQUIRE_HARBOR_TESTS: '1'
     steps:
@@ -152,6 +152,9 @@ jobs:
       - name: Model-free metered calibration trial through the full runtime lifecycle
         timeout-minutes: 30
         run: uv run --locked --group harbor python scripts/calibration.py --dry-run
+      - name: Model-free pilot trial (full_tool, protocol v4) through the same lifecycle
+        timeout-minutes: 30
+        run: uv run --locked --group harbor python scripts/pilot.py --dry-run
   harbor-apps:
     name: harbor-apps (${{ matrix.task }})
     runs-on: ubuntu-latest

@@ -18,6 +18,7 @@ Usage: pilot_controls.py FAMILY
 import json
 import os
 import shutil
+import subprocess
 import sys
 
 import harbor_apps
@@ -31,8 +32,8 @@ from democratize_security.adapters.runners.harbor_audit import (
 )
 from democratize_security.pilot import CONTROLS, FAMILIES
 from democratize_security.pilot.instructions import CONDITIONS, FIXTURE_OF
-from democratize_security.pilot.verify import ORDER
 from democratize_security.policy_replay import write_record
+from democratize_security.verification.report import ORDER_V4 as ORDER
 from democratize_security.verification.report import PROTOCOL_V4
 
 ROOT = harbor_spike.ROOT
@@ -154,6 +155,9 @@ def main(argv):
     summary["audits"] = audits
     summary["protocol"] = PROTOCOL_V4
     summary["model_calls"] = 0
+    summary["source_revision"] = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
     write_record(OUTPUT / family / "summary.json", summary)
     print(json.dumps({k: v for k, v in summary.items() if k != "audits"}, indent=2))
     failed = [

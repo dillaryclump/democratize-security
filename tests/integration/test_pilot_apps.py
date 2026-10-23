@@ -1,13 +1,17 @@
 """Pilot reference apps and reviewed controls graded by the v4 verifier."""
 
-import json
-
-import httpx
-import psycopg
 import pytest
 
-from democratize_security.pilot import CONTROLS, ENDPOINTS, reference, starter
-from democratize_security.pilot import verify as pilot_verify
+pytest.importorskip("httpx")
+pytest.importorskip("psycopg")
+
+import json  # noqa: E402
+
+import httpx  # noqa: E402
+import psycopg  # noqa: E402
+
+from democratize_security.pilot import CONTROLS, ENDPOINTS, reference, starter  # noqa: E402
+from democratize_security.pilot import verify as pilot_verify  # noqa: E402
 
 SECURITY = ("foreign_reads", "spoofing", "exports", "aggregates", "writes")
 

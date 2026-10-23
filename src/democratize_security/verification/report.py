@@ -19,20 +19,19 @@ REQUIRED = frozenset(
 
 # v4 (pilot): fixture_configuration replaces database_configuration and checks
 # the variant's intended fixture; aggregates and writes cover the new endpoints.
-REQUIRED_V4 = frozenset(
-    {
-        "fixture_configuration",
-        "authorized_reads",
-        "foreign_reads",
-        "list_search",
-        "exports",
-        "identity",
-        "spoofing",
-        "tenant_switching",
-        "aggregates",
-        "writes",
-    }
+ORDER_V4 = (
+    "fixture_configuration",
+    "authorized_reads",
+    "foreign_reads",
+    "list_search",
+    "exports",
+    "identity",
+    "spoofing",
+    "tenant_switching",
+    "aggregates",
+    "writes",
 )
+REQUIRED_V4 = frozenset(ORDER_V4)
 PROTOCOLS = {PROTOCOL: REQUIRED, PROTOCOL_V4: REQUIRED_V4}
 
 
