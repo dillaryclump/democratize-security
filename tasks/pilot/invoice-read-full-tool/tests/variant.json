@@ -1,0 +1,6 @@
+{
+  "family": "invoice-read",
+  "condition": "full_tool",
+  "fixture": "protected",
+  "protocol": "synthetic-reference-v4"
+}

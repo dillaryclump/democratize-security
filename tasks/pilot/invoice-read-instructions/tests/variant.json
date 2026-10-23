@@ -1,0 +1,6 @@
+{
+  "family": "invoice-read",
+  "condition": "instructions",
+  "fixture": "plain",
+  "protocol": "synthetic-reference-v4"
+}

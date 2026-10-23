@@ -1,0 +1,6 @@
+{
+  "family": "invoice-summary",
+  "condition": "rls_starter",
+  "fixture": "protected",
+  "protocol": "synthetic-reference-v4"
+}

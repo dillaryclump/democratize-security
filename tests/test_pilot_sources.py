@@ -19,7 +19,9 @@ ROUTES = {
 
 def endpoints(source):
     create = next(
-        n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "create_app"
+        n
+        for n in ast.parse(source).body
+        if isinstance(n, ast.FunctionDef) and n.name == "create_app"
     )
     found = {}
     for node in create.body:
@@ -95,9 +97,7 @@ def test_plain_reference_filters_every_query_and_protected_none():
     plain, protected = reference("plain").decode(), reference("protected").decode()
     assert plain.count("tenant_id = %s") == 5
     assert "INSERT INTO public.invoices (tenant_id, description, amount_cents)" in plain
-    assert "tenant_id" not in protected.split("def create_app", 1)[1].replace(
-        "app.tenant_id", ""
-    )
+    assert "tenant_id" not in protected.split("def create_app", 1)[1].replace("app.tenant_id", "")
     assert "set_config('app.tenant_id'" in protected
     assert "set_config" not in plain
 

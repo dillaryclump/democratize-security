@@ -1,0 +1,6 @@
+{
+  "family": "invoice-export",
+  "condition": "instructions",
+  "fixture": "plain",
+  "protocol": "synthetic-reference-v4"
+}
