@@ -14,7 +14,7 @@ import secrets
 from dataclasses import asdict, dataclass
 
 from democratize_security.contracts import _unique_pairs, digest
-from democratize_security.verification.report import PROTOCOL, validate_report
+from democratize_security.verification.report import PROTOCOL, PROTOCOLS, validate_report
 
 MAX_AUTH_BYTES = 64 * 1024
 _DOMAIN = b"democratize-security/runtime-verifier-report/v1\x00"
@@ -106,7 +106,7 @@ class VerificationContext:
             "verifier_sha256",
         ):
             _hash(getattr(self, key))
-        if self.protocol != PROTOCOL:
+        if self.protocol not in PROTOCOLS:
             raise AuthenticationError("Unsupported verifier protocol")
 
 
@@ -163,6 +163,8 @@ def sign_report(challenge: dict, nonce: bytes, report: dict) -> bytes:
     if not hmac.compare_digest(public["nonce_sha256"], hashlib.sha256(key).hexdigest()):
         raise AuthenticationError("Nonce does not match verification intent")
     _report(report)
+    if report["protocol"] != public["context"]["protocol"]:
+        raise AuthenticationError("Report protocol differs from the verification context")
     body = {
         "schema_version": 1,
         "kind": "runtime_verifier_report",

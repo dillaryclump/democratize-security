@@ -112,3 +112,33 @@ def test_signer_rejects_unknown_check_and_never_echoes_nonce(case):
             sign_via_subprocess(session.public_challenge(), nonce, record)
         assert nonce.hex() not in str(raised.value)
         assert nonce.hex() not in raised.value.stderr
+
+
+def test_signer_round_trips_v4_evidence():
+    from test_report_v4 import V4_ORDER
+
+    from democratize_security.runtime_auth import VerificationContext, VerifierSession
+    from democratize_security.verification.report import PROTOCOL_V4
+
+    context = VerificationContext(
+        campaign_id="c",
+        trial_id="t",
+        attempt_id="a",
+        runner_request_id="r",
+        worker_id="w",
+        verification_request_id="v",
+        controller_generation=1,
+        expected_revision=5,
+        task_revision="e" * 64,
+        artifact_binding_sha256="2" * 64,
+        artifact_sha256="c" * 64,
+        object_sha256="b" * 64,
+        verifier_sha256="f" * 64,
+        protocol=PROTOCOL_V4,
+    )
+    session = VerifierSession(context)
+    record = evidence(dict.fromkeys(V4_ORDER, "pass"))
+    record["protocol"] = PROTOCOL_V4
+    raw = sign_via_subprocess(session.public_challenge(), session.verifier_nonce(), record)
+    observation = session.authenticate(raw)
+    assert observation.complete and observation.report["protocol"] == PROTOCOL_V4

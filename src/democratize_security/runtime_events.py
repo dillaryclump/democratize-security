@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from democratize_security import objects as artifact_objects
 from democratize_security.artifacts import ArtifactError
 from democratize_security.runtime_auth import AuthenticationError, _challenge
-from democratize_security.verification.report import PROTOCOL
+from democratize_security.verification.report import PROTOCOLS
 
 MODE = "runtime"
 TERMINAL = frozenset({"completed", "interrupted"})
@@ -366,7 +366,7 @@ def _prepare(request):
     for key in ("basis_sha256", "task_revision", "verifier_sha256", "config_sha256"):
         _hash(request[key], key)
     _hash(request["source_revision"], "source_revision", _SOURCE)
-    if request["protocol"] != PROTOCOL:
+    if request["protocol"] not in PROTOCOLS:
         raise RuntimeLedgerError("Unsupported verifier protocol")
     state = dict.fromkeys(_STATE_KEYS)
     state.update({key: request[key] for key in _FIELDS["prepare"]})

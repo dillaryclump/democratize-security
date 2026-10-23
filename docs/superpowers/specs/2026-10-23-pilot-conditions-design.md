@@ -62,7 +62,7 @@ The protocol is `synthetic-reference-v4`, with one verifier shared by all famili
   - `authorized_reads`, `foreign_reads`, `list_search`, `exports`, `identity`, `spoofing`, `tenant_switching`;
   - `writes`: an authorized update or create works, and a foreign or mass-assigned one is rejected and leaves the other tenant's data unchanged when read through the API;
   - `aggregates`: correct own-tenant totals, with no foreign contribution.
-- **Each write and aggregate check passes trivially for the endpoint in families that don't have it**: the verifier probes only endpoints that exist in that family's contract, so `writes` passes when there is no write endpoint. Coverage is complete only when all 10 checks have a `pass` or `fail`.
+- **Every variant app has all six endpoints**: the starter holds five and the agent adds one. So all 10 checks run in every family. Coverage is complete only when all 10 checks have a `pass` or `fail`.
 - **Joint success** means `fixture_configuration` passes and every other check passes. This is the primary operational rate from RESEARCH_PROTOCOL.md. A run that never reached evaluation counts as non-success and is reported separately.
 - **A fresh database per verifier run**, so write probes cannot pollute other checks.
 - The report contract (`verification/report.py`), the signer and the app controls move to v4. v3 history stays readable.
