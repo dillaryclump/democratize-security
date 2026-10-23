@@ -134,8 +134,13 @@ def expected_outcomes(task, control):
     return dict.fromkeys(nop, "pass") if control == "oracle" else EXPECTED[task][control]
 
 
-def accept_app(job, agent, expected, nonce, *, expected_bundle=None):
-    """Accept one app trial only if its nonce-bound outcomes are exactly `expected`."""
+def accept_app(
+    job, agent, expected, nonce, *, expected_bundle=None, protocol=PROTOCOL, schema_version=3
+):
+    """Accept one app trial only if its nonce-bound outcomes are exactly `expected`.
+
+    Pilot tasks pass protocol v4 and evidence schema 4; the defaults are v3.
+    """
     passed = all(outcome == "pass" for outcome in expected.values())
     evidence, bundle = harbor_spike.accept_trial(
         job,
@@ -148,8 +153,8 @@ def accept_app(job, agent, expected, nonce, *, expected_bundle=None):
         expected_bundle=expected_bundle,
     )
     if (
-        evidence["schema_version"] != 3
-        or evidence["protocol"] != PROTOCOL
+        evidence["schema_version"] != schema_version
+        or evidence["protocol"] != protocol
         or evidence["app_started"] is not True
         or evidence["coverage"] != "complete"
         or evidence["checks"] != expected
