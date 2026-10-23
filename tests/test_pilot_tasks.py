@@ -35,6 +35,11 @@ VARIANT_SPECIFIC = {
 }
 # full_tool variants also get the self-check image and larger agent bounds (Task 5).
 FULL_TOOL_SPECIFIC = {"environment/Dockerfile", "environment/docker-compose.yaml"}
+FULL_TOOL_EXTRA = {
+    "environment/check-isolation",
+    "environment/fixture.py",
+    "environment/verify.py",
+}
 
 
 def files(directory):
@@ -113,7 +118,8 @@ def test_shared_files_identical_except_variant_specific():
     shared = [p for p in files(first) if p not in VARIANT_SPECIFIC | FULL_TOOL_SPECIFIC]
     for family, condition in VARIANTS:
         directory = build_pilot_tasks.variant_dir(family, condition)
-        assert files(directory) == files(first)
+        extra = FULL_TOOL_EXTRA if condition == "full_tool" else set()
+        assert files(directory) == sorted(set(files(first)) | extra)
         for path in shared:
             assert (directory / path).read_bytes() == (first / path).read_bytes(), path
             mode = (directory / path).stat().st_mode & stat.S_IXUSR
@@ -136,3 +142,29 @@ def test_skeleton_reuses_reviewed_harbor_files():
         "solution/solve.sh",
     ):
         assert (first / path).read_bytes() == (canonical / path).read_bytes(), path
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_full_tool_variant_ships_the_self_check(family):
+    environment = build_pilot_tasks.variant_dir(family, "full_tool") / "environment"
+    sources = ROOT / "src/democratize_security/pilot"
+    assert (environment / "check-isolation").read_bytes() == (
+        sources / "check_isolation.py"
+    ).read_bytes()
+    assert (environment / "check-isolation").stat().st_mode & stat.S_IXUSR
+    assert (environment / "Dockerfile").read_bytes() == (
+        sources / "task_files/environment/fulltool.Dockerfile"
+    ).read_bytes()
+    compose = (environment / "docker-compose.yaml").read_text()
+    assert "size=160m" in compose and "pids_limit: 128" in compose
+    assert 'network_mode: "none"' in compose
+    for condition in ("ordinary", "instructions", "rls_starter"):
+        other = build_pilot_tasks.variant_dir(family, condition) / "environment"
+        assert not (other / "check-isolation").exists()
+        assert "postgresql" not in (other / "Dockerfile").read_text()
+
+
+def test_only_full_tool_mentions_the_tool():
+    for family, condition in VARIANTS:
+        text = (build_pilot_tasks.variant_dir(family, condition) / "instruction.md").read_text()
+        assert ("check-isolation" in text) == (condition == "full_tool")

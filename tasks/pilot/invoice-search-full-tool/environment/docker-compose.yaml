@@ -13,10 +13,10 @@ services:
     init: true
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=16m
+      - /tmp:rw,noexec,nosuid,size=160m
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    pids_limit: 64
+    pids_limit: 128
     # Harbor exports MEMORY and sets mem_limit from task.toml; no extra swap.
     memswap_limit: ${MEMORY:?Harbor must export MEMORY}
     # Container logs are host files, and the agent can write to its init's

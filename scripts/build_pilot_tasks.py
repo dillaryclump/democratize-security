@@ -70,6 +70,18 @@ def _write(target: Path, data: bytes) -> None:
     target.chmod(0o644)
 
 
+def full_tool_compose() -> bytes:
+    """The agent compose with room for the private self-check cluster."""
+    text = (CANONICAL / "environment/docker-compose.yaml").read_text()
+    for old, new in (
+        ("      - /tmp:rw,noexec,nosuid,size=16m\n", "      - /tmp:rw,noexec,nosuid,size=160m\n"),
+        ("    pids_limit: 64\n", "    pids_limit: 128\n"),
+    ):
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return text.encode()
+
+
 def build(root: Path = OUTPUT) -> None:
     for family in FAMILIES:
         for condition in CONDITIONS:
@@ -84,6 +96,15 @@ def build(root: Path = OUTPUT) -> None:
             for path in ("tests/run.py", "tests/verify.py", "tests/fixture.py"):
                 (directory / path).chmod(0o644)
             _write(directory / "environment/app.py", starter(fixture, family))
+            if condition == "full_tool":
+                environment = directory / "environment"
+                _copy(TASK_FILES / "environment/fulltool.Dockerfile", environment / "Dockerfile")
+                _write(environment / "docker-compose.yaml", full_tool_compose())
+                _copy(HERE / "check_isolation.py", environment / "check-isolation")
+                (environment / "check-isolation").chmod(0o755)
+                for source in ("fixture.py", "verify.py"):
+                    _copy(HERE / source, environment / source)
+                    (environment / source).chmod(0o644)
             _write(directory / "solution/app.py", reference(fixture))
             _write(directory / "instruction.md", instruction(family, condition).encode())
             toml = (CANONICAL / "task.toml").read_text()
