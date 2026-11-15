@@ -5,10 +5,42 @@ build-backend = "hatchling.build"
 [project]
 name = "democratize-security"
 version = "0.1.0.dev0"
-description = "Security integration and reproducible evaluation for AI-assisted development"
+description = "Research harness that measures whether AI coding agents produce code that is both functional and secure, starting with tenant isolation on FastAPI and PostgreSQL row-level security"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Democratize Security Authors" }]
+keywords = [
+    "ai-security",
+    "coding-agents",
+    "llm-evaluation",
+    "secure-code-generation",
+    "tenant-isolation",
+    "multi-tenancy",
+    "row-level-security",
+    "postgresql",
+    "fastapi",
+    "access-control",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/dillaryclump/democratize-security"
+Documentation = "https://github.com/dillaryclump/democratize-security/tree/main/docs"
+Issues = "https://github.com/dillaryclump/democratize-security/issues"
+Changelog = "https://github.com/dillaryclump/democratize-security/blob/main/CHANGELOG.md"
 
 [project.scripts]
 research = "democratize_security.cli:main"

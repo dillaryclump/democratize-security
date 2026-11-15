@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite it using this metadata."
+title: "Democratize Security: a research harness for functional and secure code from AI coding agents"
+type: software
+authors:
+  - name: "The Democratize Security Authors"
+repository-code: "https://github.com/dillaryclump/democratize-security"
+url: "https://github.com/dillaryclump/democratize-security"
+license: Apache-2.0
+version: 0.1.0.dev0
+abstract: >-
+  A research harness that measures whether AI coding agents produce code that is
+  both functional and secure. The first property is tenant isolation in a
+  FastAPI and PostgreSQL service. It contains a reference application protected
+  by row-level security, an independent verifier with deliberately unsafe
+  controls, agent tasks graded from sealed artifacts in a separate container, a
+  durable ledger with per-request model cost metering, and a pre-registered pilot
+  protocol. As of November 2026 the pilot is incomplete and no benefit of the
+  security integration has been demonstrated.
+keywords:
+  - AI coding agents
+  - LLM evaluation
+  - secure code generation
+  - tenant isolation
+  - multi-tenancy
+  - PostgreSQL row-level security
+  - FastAPI
+  - access control
