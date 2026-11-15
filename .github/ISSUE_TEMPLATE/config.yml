@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/dillaryclump/democratize-security/security/advisories/new
+    about: Report privately. Do not open a public issue for an exploitable problem. See SECURITY.md.
+  - name: Project status and results
+    url: https://github.com/dillaryclump/democratize-security/blob/main/docs/STATUS.md
+    about: Check what is implemented and what has been measured before filing.

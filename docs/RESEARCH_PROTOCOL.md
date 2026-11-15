@@ -1,6 +1,6 @@
 # Research protocol
 
-This is the planned protocol, not a record of executed experiments. Freeze a campaign-specific revision before measurements.
+This is the planned protocol, not a record of executed experiments. Freeze a campaign-specific revision before measurements. The pilot's frozen revision is [PILOT_PROTOCOL.md](PILOT_PROTOCOL.md), and what was actually run is recorded in [RESULTS.md](RESULTS.md).
 
 ## Question and controls
 
@@ -17,7 +17,7 @@ Match model configuration, task families, generation/repair budgets and intended
 
 ## Sequence and splits
 
-First validate three public development tasks end to end. Later run six scenario families, two repetitions and four conditions: 48 logical trials. The three example records currently committed are planning placeholders, not implemented benchmark tasks.
+First validate three public development tasks end to end. Later run six scenario families, two repetitions and four conditions: 48 logical trials. The three records in `campaigns/development.example.json` are planning placeholders, not implemented tasks; the implemented tasks are described in [tasks/README.md](../tasks/README.md).
 
 Partition at scenario-family level. Related variants stay in one split. Development feedback can guide changes; selection data chooses candidates but becomes development data under repeated feedback; final cases stay inaccessible until candidate and protocol freeze. If final failures guide edits, classify that evaluation as exploratory and use new final cases for a confirmatory claim.
 

@@ -1,6 +1,8 @@
 # System architecture
 
-Status: target architecture with offline contracts/planning and a public synthetic reference/verifier implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. Three application tasks (read, list/search, CSV) run model-free under that layout, with candidate code isolated from the verifier and sealed replays; see APPLICATION_TASKS.md. Runtime step 5 is implemented for the submission of these Harbor tasks: a trusted collector extracts the one allowlisted file after the agent's container stops. Harbor's re-upload of the agent-written `/logs/artifacts` directory is excluded while the agent's container accepts execs; an agent that prevents that forces an unfiltered copy, which host acceptance detects and rejects. Container storage (submission volumes, `/tmp`, `/dev/shm`, container logs) is size-bounded per trial and audited; the trial directory Harbor bind-mounts and copies into is bounded only by the host until a worker host gives each trial its own bounded filesystem (see HARBOR_AUDIT.md, Bounded storage). See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
+Status as of 2026-11-15: the target architecture below is implemented through the M4 pilot runner, and live model trials have run through it ([RESULTS.md](RESULTS.md)). Protected final assessment, automated recovery and automated search remain unimplemented. [STATUS.md](STATUS.md) lists current capability; the rest of this paragraph records how the boundary was built up, milestone by milestone.
+
+Offline contracts/planning and a public synthetic reference/verifier are implemented. An offline container capability probe and a pinned Harbor separate-verifier policy spike are implemented as infrastructure checks. Full worker isolation, protected final assessment and automated research execution remain unimplemented. Reviewed declarative-policy replay now uses pre-existing sealed inputs; see SEALED_REPLAY.md. A host-observed audit of Harbor's actual container configuration, with a reviewed grade-forgery control, records remaining isolation gaps; see HARBOR_AUDIT.md. Three application tasks (read, list/search, CSV) run model-free under that layout, with candidate code isolated from the verifier and sealed replays; see APPLICATION_TASKS.md. Runtime step 5 is implemented for the submission of these Harbor tasks: a trusted collector extracts the one allowlisted file after the agent's container stops. Harbor's re-upload of the agent-written `/logs/artifacts` directory is excluded while the agent's container accepts execs; an agent that prevents that forces an unfiltered copy, which host acceptance detects and rejects. Container storage (submission volumes, `/tmp`, `/dev/shm`, container logs) is size-bounded per trial and audited; the trial directory Harbor bind-mounts and copies into is bounded only by the host until a worker host gives each trial its own bounded filesystem (see HARBOR_AUDIT.md, Bounded storage). See also REFERENCE.md, WORKER_PROBE.md and HARBOR.md.
 
 ## Three separate authority domains
 
@@ -25,14 +27,15 @@ The controller coordinates work; the candidate worker contains untrusted code; t
 | --- | --- | --- |
 | Contracts | `src/democratize_security/contracts.py` | Implemented v1 offline campaign validation/planning; expand with versioned records |
 | CLI | `src/democratize_security/cli.py` | Implemented `validate`, `plan`, `seal` and `inspect-artifact`; no execution CLI |
-| Controller | future `controller/` within Python package | Reserve budgets, schedule finite trials, persist transitions; never import workload code |
-| Store | `src/democratize_security/store.py` | Implemented offline plans, immutable events and synthetic reservation/settlement accounting; immutable artifact references pin synthetic verifier intent; v5 requires durable intent before new offline evidence linkage, without result acceptance; trusted runtime provenance, full recovery and backup remain future work |
+| Controller | `scripts/calibration.py` and `scripts/pilot.py` today; future `controller/` within Python package | Reserve budgets, schedule finite trials, persist transitions; never import workload code. The two scripts are single-purpose drivers, not a general dispatcher |
+| Store | `src/democratize_security/store.py` | Implemented through v8: offline plans, immutable events, reservation/settlement accounting, artifact and evidence bindings, verification intent, controller generations with write fencing, the runtime attempt lifecycle, authenticated result admission, restore fences and per-request model metering. Backup lives in `backup.py`. Automated recovery remains future work; see PERSISTENCE.md |
+| Model access | `model_meter.py`, `model_broker.py`, `model_budget.py`, `adapters/providers/` | Meter every model request and keep the provider key in the controller; see CALIBRATION.md |
 | Runner adapters | `adapters/runners/` | Harbor first; current reviewed-data spike is `scripts/harbor_spike.py`, not a production adapter. The stdlib Harbor boundary audit lives in `adapters/runners/harbor_audit.py`; the core must not import it. `scripts/harbor_apps.py` runs the three application tasks in `tasks/harbor/invoice-*`. See HARBOR.md, HARBOR_AUDIT.md and APPLICATION_TASKS.md |
 | Benchmark adapters | future `adapters/benchmarks/` | Prepare/inject/extract/normalize; preserve original scoring and task provenance |
 | Proposer adapters | future `adapters/proposers/` | Manual candidate initially, GEPA later; development feedback only |
-| Security integration | `candidates/` | Prompts/templates/helpers/policies that the product ships; cannot define authoritative grades |
+| Security integration | `candidates/` (empty); pilot fixtures in `src/democratize_security/pilot/` | Prompts/templates/helpers/policies that the product ships; cannot define authoritative grades. Only the pilot's research fixtures exist so far |
 | Verifier | `src/democratize_security/verification/` | Public fixed-fixture HTTP/database checks implemented and bound to sealed artifacts in the Harbor tasks, which collect them through a trusted collector (runtime step 5); protected verification remains future work |
-| Reporting | future `reports/` | Aggregate all scheduled outcomes, costs, uncertainty and limitations |
+| Reporting | `scripts/pilot_report.py` today; future `reports/` | Aggregate all scheduled outcomes, costs, uncertainty and limitations. The pilot report reads only the ledger |
 
 Do not create empty plugin classes for every hypothetical future integration. Add a module when its first concrete behavior and tests are implemented.
 
@@ -55,15 +58,17 @@ The verifier must check roles/policies, actual API response bodies and CSV conte
 
 ## Storage and lifecycle
 
-The proposed M3 [persistence/recovery contract](PERSISTENCE.md) and
+The M3 [persistence/recovery contract](PERSISTENCE.md) and
 [ADR 0004](decisions/0004-persistence-recovery.md) refine the lifecycle below
-with durable dispatch intent and explicit reconciliation. The wider runtime semantics remain a design for review. Store v5 implements
-only offline plans, synthetic accounting, immutable artifact bindings and offline
-evidence linkage with prior verification intent; it grants no execution permission.
+with durable dispatch intent and explicit reconciliation. Store v8 implements
+that lifecycle for runtime attempts, with authenticated result admission, restore
+fences and per-request model metering (ADRs 0005 to 0007). The calibration and
+pilot drivers use it. Holding a plan, binding or reservation in the store grants
+no permission to execute.
 
 Git stores reviewed source, public task metadata and campaign configurations. SQLite initially stores trial identities, state transitions, reservations, usage and evidence locations. Artifacts live in a separate content-addressed directory. Private final cases live outside the repository, its history and agent images. Backups must preserve the database and artifact index together.
 
-Planned lifecycle: `planned -> preparing -> running -> sealed -> verifying -> completed`. Failures/timeouts can produce `interrupted` with explicit reason and retained evidence. A completed trial may still fail functionality or security. Restart reconciles leases with actual workers; it must never blindly create a second paid attempt. These runtime semantics are not yet implemented.
+Planned lifecycle: `planned -> preparing -> running -> sealed -> verifying -> completed`. Failures/timeouts can produce `interrupted` with explicit reason and retained evidence. A completed trial may still fail functionality or security. Restart reconciles leases with actual workers; it must never blindly create a second paid attempt. The store records these phases, and the live drivers skip any trial that already has an attempt, but reconciliation after a crash is a manual procedure: no automated recovery engine exists. The interrupted pilot in [RESULTS.md](RESULTS.md) is the first real case.
 
 ## Evolution without a rewrite
 

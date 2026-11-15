@@ -1,8 +1,11 @@
 # Metered development calibration
 
-Status: implemented for issue #69. The owner approved a **$10 model-only cap**
-for exactly these six trials on 2026-10-20 (#57). The 48-trial pilot is not
-approved. The worker evidence was accepted in #19.
+Status: implemented for issue #69 and run once, on 2026-10-23. All six trials
+passed for 27 cents (upper bound); see [RESULTS.md](RESULTS.md). The owner
+approved a **$10 model-only cap** for exactly these six trials on 2026-10-20
+(#57), and that approval is now used up. The 48-trial pilot was approved
+separately and has its own protocol, [PILOT_PROTOCOL.md](PILOT_PROTOCOL.md). The
+worker evidence was accepted in #19.
 
 ## Scope
 
@@ -86,4 +89,4 @@ Before running:
 
 - **The signer is a bridge.** It does not sign inside the verifier's own container. The Harbor nonce authenticates the replay evidence before signing.
 - **Harbor exceptions stop collection.** A trial whose agent raised, for example after `TransportHalted`, is interrupted rather than graded.
-- **No live request has been made by this change.** Account access, the model IDs actually returned, and current prices are still unverified.
+- **The pull request that added this made no live request.** The live run followed on 2026-10-23 and is recorded in [RESULTS.md](RESULTS.md). It exercised account access and both model IDs with no unknown request outcome. Its settled costs have not been reconciled against the provider bill.

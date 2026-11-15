@@ -36,12 +36,14 @@ Use HANDOFF_TEMPLATE.md. Link the PR, exact tested commit/run, unavailable check
 
 ## Current integration hazard
 
-As of 2026-10-17 UTC, #39/#41/#43/#45 are merged on main through `c5a177c`,
-with successful CI on each reviewed source head. Source commits and branches
-remain intact. No implementation slice in this evidence stack remains unmerged.
-Documentation reconciliation #47 merged at `99a62f7`, closing #46.
-Issue #48 owns the pure recovery policy on `milestone/recovery-decisions`;
-it does not modify the store schema or implement durable controller fencing.
+As of 2026-11-15 UTC, every implementation slice through the M4 pilot (#72) is
+merged on main at `c05e58d`, and no implementation branch is in flight.
+
+The hazard now is outside Git. The pilot ledger on the dedicated worker holds an
+attempt that was interrupted mid-request on 2026-10-23 and has not been
+reconciled ([RESULTS.md](RESULTS.md)). Opening a ledger registers a controller
+generation, which is a write, so inspect a copy. Do not resume, reconcile or
+clean up without a recorded owner decision.
+
 See STATUS.md for live capability, evidence and remaining gates. Check live
-issue/PR state before modifying overlapping store or status files. M2 owner
-acceptance stays in #19 and is not implied by implementation merges.
+issue/PR state before modifying overlapping store or status files.
