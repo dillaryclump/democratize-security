@@ -9,7 +9,7 @@ An open research harness for one question: **when an AI coding agent writes a fe
 
 The first security property is tenant isolation in a multi-tenant web API, built on FastAPI and PostgreSQL row-level security (RLS). An agent adds one endpoint to a synthetic invoice service. An independent verifier then checks that each organization can still use its own invoices and can never read or change another organization's. Cross-tenant leaks of this kind are a form of broken access control, also known as IDOR or BOLA.
 
-> **Status: research prototype.** The measurement pipeline is built, tested and has run real model trials. It has **not** shown that the security integration improves anything. In the trials run so far, every condition passed every check, including the plain baseline with no security help. Nothing here is a production security control. See [Results so far](#results-so-far) and [What this does not claim](#what-this-does-not-claim).
+> **Status: research prototype.** The measurement pipeline is built, tested and has run real model trials. It has **not** shown that the security integration improves anything. In the trials run so far, every condition passed every check, including the plain baseline, which gets only the feature and ownership requirements. Nothing here is a production security control. See [Results so far](#results-so-far) and [What this does not claim](#what-this-does-not-claim).
 
 ## Why this exists
 
@@ -65,13 +65,13 @@ Full tables, provenance and deviations are in [docs/RESULTS.md](docs/RESULTS.md)
 
 The pilot is **incomplete**. The worker's virtual machine stopped partway through, and the run has not been resumed. Under the pre-registered rule that unrun trials count as non-success, the joint success rate is 20 of 48, and 5 of 12 in every condition.
 
-What the graded trials show is that the pipeline works end to end for about five cents a trial, and that **no difference between conditions was observed**. The baseline agent with no security help passed everything it attempted, so these tasks do not yet separate the conditions for the model tested. That is a finding about the task set, not evidence that the integration helps or that AI-written code is safe.
+What the graded trials show is that the pipeline works end to end for about five cents a trial, and that **no difference between conditions was observed**. The baseline, with no security guidance, no database protection and no self-check, passed everything it attempted, so these tasks do not yet separate the conditions for the model tested. That is a finding about the task set, not evidence that the integration helps or that AI-written code is safe.
 
 ## Quick start
 
 You need Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/). The code is POSIX-only and CI runs on Ubuntu. Use Linux or WSL2; it does not import on native Windows. macOS is not covered by CI.
 
-**1. Offline checks.** No Docker, database, network model or money:
+**1. Offline checks.** No Docker, database, model access or money:
 
 ```bash
 git clone https://github.com/dillaryclump/democratize-security.git

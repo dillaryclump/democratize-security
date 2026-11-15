@@ -26,7 +26,7 @@ Before any model run, the verifier itself is tested with reviewed controls. No m
 
 Each of the 24 pilot variants runs three controls through the full container boundary: the reference solution (`oracle`), the unchanged starter (`nop`) and a reviewed vulnerable solution (`unsafe`). Each family's `full_tool` variant adds two controls that run the `check-isolation` self-check on the reference and on the unsafe solution. That makes 14 control trials per family and 84 in total. Each must produce exactly the per-check outcomes recorded in `src/democratize_security/pilot/controls/expected.json`, and each is audited against the host-observed container configuration.
 
-All 84 were accepted and audited on the dedicated worker at `c05e58d` on 2026-10-23, directly before the pilot, after the full test suite passed there (1,429 tests, none skipped, with real PostgreSQL, Docker and Harbor). The same controls run in the CI job `pilot-controls` on every push.
+All 84 were accepted and audited on the dedicated worker at `c05e58d` on 2026-10-23, directly before the pilot, after the full test suite passed there (1,429 tests, none skipped, with real PostgreSQL, Docker and Harbor). The same controls run in the CI job `pilot-controls` on every pull request and on every push to main.
 
 This matters for reading the results below. The verifier does fail vulnerable code: every unsafe control fails at least one check, in the plain variants and in the variants protected by forced row-level security. A pass is therefore not an artifact of a verifier that passes everything.
 
@@ -78,6 +78,8 @@ This matters for reading the results below. The verifier does fail vulnerable co
 | after 19:47:43 | The worker's WSL2 virtual machine stopped. The cause was not recorded. The session never reached its report or cleanup steps. |
 
 Nothing was written to the ledger afterwards. On 2026-11-15 the ledger was copied, and the report below was generated from the copy with the committed `scripts/pilot_report.py` at `c05e58d`. The original was not opened for writing; its SHA-256 was the same before and after.
+
+The order in which the 21 trials were dispatched matches the order regenerated from the protocol's seed, `random.Random(20261023)`. The three trials of the first repetition that never started were the last three in that order.
 
 ### Report, as generated
 
