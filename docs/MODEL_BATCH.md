@@ -1,7 +1,10 @@
 # Model batch proposal and exact offline costs
 
 Status: the owner approved a **$10 model-only cap for the six-trial calibration
-only** on 2026-10-20 (#57); the 48-trial pilot below remains unapproved. The
+only** on 2026-10-20 (#57). The $125 pilot cap proposed below was never approved:
+on 2026-10-23, after calibration measured real usage, the owner approved a $15
+hard cap for the pilot instead ([PILOT_PROTOCOL.md](PILOT_PROTOCOL.md)). Both
+runs are recorded in [RESULTS.md](RESULTS.md). The
 metered transport and calibration driver are implemented in #69; see
 [CALIBRATION.md](CALIBRATION.md). Sources fetched 2026-10-17. No model,
 token-count, account or provider API request was made by these documents.

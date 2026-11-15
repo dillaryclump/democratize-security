@@ -1,176 +1,91 @@
 # Current status and next handoff
 
-Updated: 2026-10-17 America/Denver. Report contracts #39, durable evidence objects #41,
-offline evidence ledger #43 and verification intent #45 are merged into main
-through `c5a177c`, with successful CI on all four reviewed source heads.
-Handoff #47 merged at `99a62f7` with CI run 39039851019 passing. Pure recovery
-decisions (#48/#49), including review fixes, merged through #52 at `061cd1a`;
-main CI run [39054062485](https://github.com/dillaryclump/democratize-security/actions/runs/39054062485)
-passed. Authentication #58 and offline backup #59 are merged through `1fd5468`.
-Controller fencing and explicit v6 backup support are in review in #64 for #53.
-Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
-and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before claiming
-work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
+Updated: 2026-11-15 UTC. This page describes main at `c05e58d` plus the release-readiness change in [#80](https://github.com/dillaryclump/democratize-security/issues/80), which adds documentation, the license and package metadata and changes no code. The previous page is archived verbatim in [STATUS_HISTORY.md](STATUS_HISTORY.md).
+
+Check live [issues](https://github.com/dillaryclump/democratize-security/issues) and [PRs](https://github.com/dillaryclump/democratize-security/pulls) before claiming work. [COORDINATION.md](COORDINATION.md) defines the ownership convention.
+
+## Where the project stands
+
+| Gate ([ROADMAP.md](ROADMAP.md)) | State | Evidence |
+| --- | --- | --- |
+| Foundation | Done | Offline contracts, planner and CLI |
+| M0 Contract | Accepted for the synthetic scope | Owner review 2026-10-17, recorded in #19. Production identity is unresolved |
+| M1 Verifier | Done | [REFERENCE.md](REFERENCE.md), CI job `postgres-reference` |
+| M2 Runner | Done, owner-accepted 2026-10-20 | #19, [APPLICATION_TASKS.md](APPLICATION_TASKS.md), [WORKER_HOST.md](WORKER_HOST.md) |
+| M3 Persistence | Partial | Store v8 is built and used by the live runs. Recovery after a crash is still manual |
+| M4 Pilot | Built and started, **incomplete** | 20 of 48 trials graded, 1 interrupted, 27 not run. [RESULTS.md](RESULTS.md) |
+| M5 Search, M6 Confirmation, M7 Product pilot | Not started | |
+
+**No benefit of the security integration has been demonstrated.** Every graded pilot trial passed every check in all four conditions, so the data shows no difference between them.
+
+## Open items that need the owner
+
+1. **The pilot is interrupted.** The worker's virtual machine stopped on 2026-10-23 at about 19:47 UTC, during trial 21. In the pilot ledger, attempt `pilot-invoice-create-instructions-r1` is still in phase `running` with one open model request and a held 101¢ reservation. Decide whether to close the pilot as reported or run the remaining 27 trials as a declared deviation. Either way the open attempt must be reconciled first. See [RESULTS.md](RESULTS.md).
+2. **Costs are unreconciled.** Settled costs (27¢ calibration, 107¢ pilot) are upper bounds and have not been compared with the provider bill.
+3. **Worker cleanup.** As observed on 2026-11-15, `ds-worker` still holds three exited containers from the interrupted trial and the unarchived job directories under `.research/pilot`. Nothing was changed there.
+4. **The task set does not separate the conditions** for the model tested. Decide whether to design harder scenarios before another comparison.
+5. **Production identity** remains undecided. The fixture's fixed bearer tokens are not authentication.
+6. **Seven Dependabot PRs** are open and unreviewed (#3, #73, #74, #76 to #79).
 
 ## Implemented capabilities
 
-- Offline campaign validation/planning, with execution disabled.
-- Synthetic FastAPI invoice reads, list/search/pagination and CSV; server-owned
-  fixture identities and restricted PostgreSQL RLS.
-- Public independent HTTP/database verifier, protocol `synthetic-reference-v3`,
-  with complete accounting of eight checks and deliberate unsafe controls.
-- Harbor 0.24.0 model-free policy and three application tasks, separate candidate
-  containers, nonce-bound evidence, trusted submission collection and sealed replay.
-- Model-free Terminus2 transport conformance (#63): a fixed scripted backend
-  drives Terminus2's real parser, tmux loop and completion confirmation through
-  the audited invoice-read boundary; no model or provider. See
-  [TERMINUS_CONFORMANCE.md](TERMINUS_CONFORMANCE.md).
-- Host rejection of forced unfiltered `/logs/artifacts` fallback copies. Audit v5
-  bounds container storage: submissions, tmpfs, shared memory and logs. Each app
-  has twelve reviewed control/replay trials. See [APPLICATION_TASKS.md](APPLICATION_TASKS.md).
-- SQLite offline plans, immutable events and synthetic attempt/reservation/settlement
-  accounting. Unknown costs retain their holds; conflicts persist integrity stops.
-- Durable artifact and evidence objects, immutable attempt/artifact/evidence
-  bindings, corruption checks and explicit schema migration. Failed/incomplete
-  reports retain their outcomes; passing offline reports do not complete trials.
-- Store v5 commits verification intent before admitting new schema-v2
-  evidence bindings. Historical evidence remains unchanged and cannot acquire
-  retrospective intent. This records expectations, not verifier authentication.
-- On #53: store v6 adds durable append-only controller generations, validated
-  current-generation access and process/generation fencing before every write,
-  including exact retries and conflict-stop inserts. Explicit migration validates
-  complete v5 history first and preserves historical bytes. This branch implements
-  local controller ownership only; no runtime recovery or dispatch is enabled.
-  Original fencing head `84592b2`: local locked checks passed 827 tests with no
-  skips, on Python 3.12.13 with PostgreSQL and all seven Docker worker cases.
-  That evidence predates the merged auth/backup compatibility update.
-- Issue #56 adds the standard-library per-request verifier authentication
-  contract: exact trusted context, a fresh in-memory nonce, canonical signed
-  reports, replay rejection and detached authenticated observations. It is not
-  wired to the isolated verifiers, result admission or store transitions. A
-  controller crash before admission leaves verification incomplete and retains
-  its hold. See [RUNTIME_AUTH.md](RUNTIME_AUTH.md) and ADR 0005. Local verification
-  on this change: 807 passed with real PostgreSQL and Docker probes; locked sync,
-  Ruff lint/format and offline package build passed. No Harbor live trials were
-  rerun locally for this isolated contract change.
-- Verified offline backup/restore (#55/#59), with explicit v6 support in #64,
-  preserves historical records and the complete controller-generation history.
-  Only private scratch copies allocate during validation; frozen/restored bytes
-  stay exact until deliberate store open. Corrupt/rehashed generation histories
-  reject; v5 sources/archives require explicit migration using matching tooling.
-  Restore provenance remains advisory, with no persistent runtime reconciliation
-  gate. See [BACKUP.md](BACKUP.md). Combined v6/auth/backup local verification:
-  961 passed, no skips, on Python 3.12.13 with real PostgreSQL and all seven
-  Docker worker cases; locked sync, Ruff lint/format and package build passed.
-- On #62: store v7 records runtime attempts (prepare, dispatch intent,
-  acknowledgement, seal, verify intent, reconcile/resolve, interrupt, settle) in
-  the shared fenced ledger. `admit_result` authenticates a verifier envelope with
-  its live session and commits the result atomically; incomplete coverage
-  interrupts and keeps the hold. Restores carry a durable fence that blocks
-  preparation and dispatch until explicitly reconciled; backups are v7-only.
-  `recovery_state` projects validated attempts onto recovery advice. No runner,
-  dispatcher or provider is connected. See [PERSISTENCE.md](PERSISTENCE.md) and
-  ADR 0007.
-- M4 pilot (#57, branch `milestone/pilot-conditions`):
-  - 24 generated variants in `tasks/pilot/` cover 6 families × 4 conditions, graded by protocol v4.
-  - `ordinary` and `instructions` run against a plain database, so only the agent's code isolates tenants. `rls_starter` and `full_tool` run against forced RLS.
-  - `full_tool` adds `check-isolation`, a private-PostgreSQL self-check on development data inside the network-less agent container.
-  - Model-free Harbor controls cover every variant. The pilot runner (`scripts/pilot.py`) reuses the metered v8 lifecycle; its dry run admitted a v4 pass/complete result.
-  - The protocol is pre-registered in [PILOT_PROTOCOL.md](PILOT_PROTOCOL.md). The owner approved a $15 hard cap on gpt-6.1-sol. No live pilot request yet.
-  - Calibration (2026-10-23): 6/6 pass/complete for 27¢ (upper bound).
-- On #69: store v8 meters every model request of a runtime attempt (durable
-  intent before one retry-free send, upper-bound settlement, unknown outcomes keep
-  their hold and stop the batch). A controller-side broker serves Harbor's
-  `MeteredTerminus` over a private socket, so the provider key never enters the
-  Harbor environment. `scripts/calibration.py` runs each trial through the full
-  v8 lifecycle and admits only signed sealed-replay results. The model-free dry
-  run (CI `metered-dry-run`) admitted pass/complete and settled 3 cents locally.
-  See [CALIBRATION.md](CALIBRATION.md). No live model request has been made.
-- On #48: a pure recovery decision function covers synthetic crash observations,
-  rejects stale/foreign context and preserves uncertain cost holds. It emits
-  inspection advice only. See [RECOVERY.md](RECOVERY.md); no live recovery or
-  durable controller fencing is implemented by the #48 slice. Review fixes:
-  - acknowledged phases require the bound worker, so a foreign worker's
-    observation is rejected;
-  - a worker active after sealing is an integrity stop;
-  - a reference or intent cannot precede its phase;
-  - the previously untested rules now have tests that fail without them.
+- **Campaign contracts and planner.** Offline validation and deterministic planning (`research validate`, `plan`, `seal`, `inspect-artifact`). See [CONTRACTS.md](CONTRACTS.md).
+- **Reference apps.** A synthetic FastAPI invoice API with reads, list/search, CSV export, update, create and summary. One variant is protected by forced PostgreSQL RLS and a restricted role, and one isolates tenants in application code against a plain database. See [REFERENCE.md](REFERENCE.md).
+- **Independent verifier.** HTTP and database checks with complete accounting. Protocol `synthetic-reference-v3` has 8 required checks; `synthetic-reference-v4` has 10 and adds writes and aggregates. Reviewed unsafe controls must fail for their intended reason.
+- **Harbor tasks.** One policy task and three application tasks under `tasks/harbor/`, and 24 generated pilot variants under `tasks/pilot/` (6 families × 4 conditions). Pinned to Harbor 0.24.0. See [APPLICATION_TASKS.md](APPLICATION_TASKS.md).
+- **Evaluation boundary.** Separate candidate containers with no network, a trusted collector that runs after the agent stops, sealed artifacts, sealed replay in a fresh verifier, nonce-bound evidence and a host-observed boundary audit (policy v5) with bounded container storage. Host acceptance rejects a trial where the agent forced Harbor's unfiltered artifact fallback. See [HARBOR_AUDIT.md](HARBOR_AUDIT.md) and [SEALED_REPLAY.md](SEALED_REPLAY.md).
+- **Dedicated worker.** A root helper gives each Harbor job its own 64 MiB filesystem when `DS_WORKER_HOST_REQUIRED=1`. See [WORKER_HOST.md](WORKER_HOST.md).
+- **Ledger (store v8).** SQLite with immutable events: plans, attempts, budget reservations and settlement, artifact and evidence bindings, verification intent, controller generations with write fencing, the runtime attempt lifecycle, authenticated result admission, restore fences and per-request model metering. Unknown costs keep their holds. See [PERSISTENCE.md](PERSISTENCE.md), [EVIDENCE.md](EVIDENCE.md), [RUNTIME_AUTH.md](RUNTIME_AUTH.md) and ADRs 0004 to 0007.
+- **Backup and restore.** Verified offline backup of the ledger and its objects, version 8 only. See [BACKUP.md](BACKUP.md).
+- **Recovery decisions.** A pure function that turns a crash observation into inspection advice. It changes no state. See [RECOVERY.md](RECOVERY.md).
+- **Model access.** A controller-side broker serves Harbor's Terminus2 agent over a private socket, meters every request and keeps the provider key out of the Harbor environment. A model-free transport conformance test covers the same path. See [CALIBRATION.md](CALIBRATION.md), [MODEL_BATCH.md](MODEL_BATCH.md) and [TERMINUS_CONFORMANCE.md](TERMINUS_CONFORMANCE.md).
+- **Pilot.** Four conditions, six families, the `check-isolation` self-check for `full_tool`, model-free controls for every variant, the runner `scripts/pilot.py` and the report `scripts/pilot_report.py`. The protocol is pre-registered in [PILOT_PROTOCOL.md](PILOT_PROTOCOL.md).
 
-## Integration and evidence
+## Evidence
 
-| PR | Capability | Reviewed head | CI run | Merge |
-| --- | --- | --- | --- | --- |
-| #39 | Strict reports and canonical envelopes | `bc58fd2` | [38916744794](https://github.com/dillaryclump/democratize-security/actions/runs/38916744794), passed | `50cfc6b` |
-| #41 | Durable evidence objects | `cb42757` | [38954132208](https://github.com/dillaryclump/democratize-security/actions/runs/38954132208), passed | `c9b3fcc` |
-| #43 | Store v4 offline evidence ledger | `8cda0d3` | [38955296644](https://github.com/dillaryclump/democratize-security/actions/runs/38955296644), passed | `8d79142` |
-| #45 | Store v5 verification intent | `c933a95` | [39039241931](https://github.com/dillaryclump/democratize-security/actions/runs/39039241931), passed | `c5a177c` |
+| What | Revision | Result |
+| --- | --- | --- |
+| CI on main | `c05e58d`, run [40001476306](https://github.com/dillaryclump/democratize-security/actions/runs/40001476306) | All 16 jobs passed |
+| Full suite on the dedicated worker | `c05e58d`, 2026-10-23 | 1,429 passed, none skipped, with real PostgreSQL, Docker and Harbor |
+| Pilot controls on the dedicated worker | `c05e58d`, 2026-10-23 | 84 of 84 control trials accepted and audited |
+| Calibration, live | `1f83ca6`, 2026-10-23 | 6 of 6 pass and complete, 27¢ upper bound |
+| Pilot, live, incomplete | `c05e58d`, 2026-10-23 | 20 graded and passed, 1 interrupted, 27 not run, 107¢ upper bound |
 
-The merged prerequisites retain their source commits and branches. Integration
-checks compare merge trees to the reviewed source trees; no runtime files were
-modified to reconcile the stack. Local #45 verification: 550 passed, 54 skipped
-for unavailable optional dependencies/PostgreSQL/Docker; locked sync, Ruff and
-build passed. Skipped checks are not integration evidence. Each CI row applies
-only to its named revision. Earlier observations, failures and evidence are
-preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
+Each row applies only to its named revision. A green job, merged code and owner acceptance are separate facts. Earlier observations, failures and evidence are preserved in [STATUS_HISTORY.md](STATUS_HISTORY.md).
+
+## Owner decisions on record
+
+| Date | Decision | Where |
+| --- | --- | --- |
+| 2026-10-17 | Synthetic scope and contract defaults approved | #19 |
+| 2026-10-20 | Bounded dedicated-worker evidence accepted, with two documented verifier gaps as residual limitations for the synthetic public scope | #19 |
+| 2026-10-20 | $10 model-only cap for the six-trial calibration. Used: 27¢ settled | #57 |
+| 2026-10-23 | $15 hard model-only cap for the 48-trial pilot on `gpt-6.1-sol`. Used so far: 107¢ settled, 101¢ held | #57 |
+| 2026-11-15 | Apache-2.0 license | [ADR 0002](decisions/0002-licensing.md) |
+| 2026-11-15 | Publish the interim pilot record | #80 |
+| 2026-11-15 | Enable private vulnerability reporting, Dependabot security updates and a main-branch ruleset | #80, [DEVELOPMENT.md](DEVELOPMENT.md) |
+
+No spending beyond the $15 pilot cap is approved.
 
 ## Next bounded work
 
-1. Run the pilot controls and the 48-trial pilot on the dedicated worker under the
-   approved $15 cap ([PILOT_PROTOCOL.md](PILOT_PROTOCOL.md)), then report all
-   scheduled trials with `scripts/pilot_report.py`.
-2. Build the remaining pilot conditions and task families on the conformant
-   Terminus2 transport (#63). Do not manufacture accepted results from the
-   offline evidence APIs.
-3. Only after persistence/recovery review and M0/M2 acceptance, connect the runner
-   on a dedicated bounded worker. Model execution additionally needs an explicitly
-   approved finite budget. No paid pilot or optimizer is authorized by this ledger.
+1. Reconcile the interrupted pilot attempt and record the owner's decision to close or resume (open item 1).
+2. Reconcile settled costs against the provider bill (open item 2).
+3. Clean up the worker after the ledger is reconciled (open item 3).
+4. Only then consider the next experiment. Do not start M5 search on a task set that shows no difference between conditions.
+
+Do not manufacture accepted results from the offline evidence APIs, and do not treat a saved plan, binding or cost reservation as authorization to run a trial.
 
 ## Remaining gates and limitations
 
-M3 remains partial: no live recovery engine, production dispatcher, runner
-integration, protected final evaluator, paid pilot, demonstrated benchmark
-improvement or GEPA search exists. The ledger's admission, restore fence and
-request reservations are local process-level guarantees only.
+- **No automated recovery.** No recovery engine, general dispatcher, protected final evaluator, demonstrated improvement or GEPA search exists. The calibration and pilot drivers are single-purpose scripts. The ledger's admission, restore fence and request reservations are local process-level guarantees.
+- **Residual isolation gaps.** On ordinary hosts the audit reports `agent_can_write_verifier_log_directory`, `verifier_storage_unbounded` and `trial_storage_unbounded`. The dedicated worker removes the third. The two verifier gaps remain and were accepted for the synthetic public scope only. Containers share the worker's kernel.
+- **Public fixtures.** The tasks and the verifier are public. They are not a protected holdout.
+- **The signer is a bridge.** Reports are signed by a short-lived controller-side process after the Harbor nonce authenticates the replay evidence, not inside the verifier's container.
+- **No release.** No package is published and no version is tagged.
 
-Issue #50: PR #49's CI run 39043199834 failed one `harbor-apps` audit. In the
-`sparse` control, a collector exec carried an earlier timestamp than the agent's
-`die` event, which Docker emits after the exit that releases `docker stop`.
-Collector ordering now uses the agent's recorded exit time, with the `die` as
-fallback. A real stop failure still fails, now with the measured lead. Locally
-(Docker 29.8.2, cgroup v1, root; proxy-CA patched images), `invoice-read` passed
-all 12 trials and 12/12 audits. In every trial `die` trailed the recorded exit by
-48–87 ms, and the first collector exec came 108–840 ms after `die`.
-
-M2 owner acceptance remains open in #19. On ordinary hosts the observed runner
-gaps are `agent_can_write_verifier_log_directory`, `verifier_storage_unbounded`
-and `trial_storage_unbounded`. Issue #54 (PR #61) adds the dedicated-worker
-helper: with `DS_WORKER_HOST_REQUIRED=1`, each Harbor job gets its own 64 MiB
-ext4 loop filesystem before launch. On the dedicated WSL2 worker Dillon selected
-(source `2a6ed57`, Docker Engine 29.9.1, cgroup v2), the privileged storage
-control reached ENOSPC at 57,307,136 bytes, the full suite passed (1000, no
-skips, real PostgreSQL and Docker), and replay, audit and all three application
-tasks passed. All 37 audited trials observed `own_filesystem: true` at
-58,675,200 bytes, so `trial_storage_unbounded` no longer appears there; the two
-verifier gaps remain for owner review. All 41 jobs were archived and released in
-the same session. Public fixtures are not a protected holdout, and containers
-share the WSL2 kernel. See [WORKER_HOST.md](WORKER_HOST.md) and
-[HARBOR_AUDIT.md](HARBOR_AUDIT.md).
-
-Production identity, license, branch protection and vulnerability-reporting
-setup remain owner decisions. Green CI and merged code
-are not owner acceptance or evidence of product efficacy.
-
-Owner review update, 2026-10-17: Dillon approved the existing synthetic scope,
-contract defaults and review of M2 evidence/residual limitations; recorded in
-[#19](https://github.com/dillaryclump/democratize-security/issues/19#issuecomment-6238276266).
-Issue #19 remains open for owner acceptance of the bounded worker-host evidence
-above (2026-10-20: Dillon chose a dedicated local WSL2 distro instead of waiting
-for another machine). Production identity and the other owner
-decisions above remain unresolved. Infrastructure/model spending has no approved
-finite budget, and this approval does not enable execution.
+Green CI and merged code are not owner acceptance or evidence of product efficacy.
 
 ## Handoff maintenance
 
-Use [HANDOFF_TEMPLATE.md](HANDOFF_TEMPLATE.md), claim bounded work in a live issue
-and recheck main/open PRs before editing. Archive superseded observations with
-their exact revision; keep this page focused on current capabilities and next work.
+Use [HANDOFF_TEMPLATE.md](HANDOFF_TEMPLATE.md), claim bounded work in a live issue and recheck main and open PRs before editing. Archive superseded observations with their exact revision, and keep this page focused on current capabilities and next work.
