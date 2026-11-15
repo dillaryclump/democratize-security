@@ -28,6 +28,8 @@ Each of the 24 pilot variants runs three controls through the full container bou
 
 All 84 were accepted and audited on the dedicated worker at `c05e58d` on 2026-10-23, directly before the pilot, after the full test suite passed there (1,429 tests, none skipped, with real PostgreSQL, Docker and Harbor). The same controls run in the CI job `pilot-controls` on every pull request and on every push to main.
 
+**Not reproducible from source at present.** Some time between 2026-11-03 and 2026-11-15, Debian replaced the PostgreSQL package version that the `full_tool` agent image pins, and that image no longer builds. The `full_tool` controls last passed in CI on 2026-11-03 and fail as of 2026-11-15. The controls for the other three conditions still pass. See [#84](https://github.com/dillaryclump/democratize-security/issues/84).
+
 This matters for reading the results below. The verifier does fail vulnerable code: every unsafe control fails at least one check, in the plain variants and in the variants protected by forced row-level security. A pass is therefore not an artifact of a verifier that passes everything.
 
 ## Calibration
@@ -206,6 +208,7 @@ These are owner decisions, and none has been taken:
 2. Either close the pilot as reported here, or run the remaining 27 trials as a declared deviation. The $15 cap covers the remainder.
 3. Reconcile the settled costs against the provider bill.
 4. Decide whether the task set needs harder scenarios before another comparison is worth its cost.
+5. If the pilot is resumed, first make the `full_tool` agent image buildable again ([#84](https://github.com/dillaryclump/democratize-security/issues/84)). Any fix changes the digests of the six `full_tool` task trees, which the campaign froze, so the remaining `full_tool` trials would run a task that differs from the one already graded. That is a further deviation and must be reported as one.
 
 ## Provenance
 

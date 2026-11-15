@@ -9,6 +9,7 @@ No version has been tagged or published. Everything below is unreleased developm
 - Licensed the project under Apache-2.0 and added `NOTICE`, package metadata and `CITATION.cff` (issue #80, [ADR 0002](docs/decisions/0002-licensing.md)).
 - Rewrote the README, added a documentation index and a results record, and reconciled the status page with what was actually run.
 - Recorded the interrupted pilot, which until then appeared nowhere in the repository.
+- Found and filed, but did not fix: the pilot's `full_tool` agent image no longer builds, because Debian replaced the PostgreSQL package version it pins (issue #84). The pilot CI jobs are red until it is fixed.
 - No code, test, task or protocol changed.
 
 ## M4 Pilot (2026-10-23)

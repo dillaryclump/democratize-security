@@ -38,7 +38,7 @@ Every PR states: problem; change; requirement covered; tests actually run and th
 
 ## Immediate next work
 
-**State as of 2026-11-15.** The calibration ran 6 of 6 for 27 cents. The M4 pilot is implemented and was started on 2026-10-23, then interrupted when the worker VM stopped: 20 of 48 trials graded (all passed), 1 left in phase `running`, 27 not run. docs/RESULTS.md is the record. No benefit of the integration has been shown.
+**State as of 2026-11-15.** The calibration ran 6 of 6 for 27 cents. The M4 pilot is implemented and was started on 2026-10-23, then interrupted when the worker VM stopped: 20 of 48 trials graded (all passed), 1 left in phase `running`, 27 not run. docs/RESULTS.md is the record. No benefit of the integration has been shown. CI is red on the pilot jobs because the `full_tool` agent image no longer builds (#84); the fix changes frozen task digests and is blocked on an owner decision.
 
 **Next.** Follow the open items in docs/STATUS.md. Do not resume the pilot, reconcile its ledger, send a model request or clean up the worker without a recorded owner decision: the pilot ledger on `ds-worker` holds an open attempt, and opening a ledger is itself a write. Inspect copies only. The $15 cap on gpt-6.1-sol (#57) is the only approved spending. The public oracle is not a protected evaluator. Do not jump directly to GEPA or a hosted dashboard.
 

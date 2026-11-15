@@ -25,7 +25,9 @@ Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 3. **Worker cleanup.** As observed on 2026-11-15, `ds-worker` still holds three exited containers from the interrupted trial and the unarchived job directories under `.research/pilot`. Nothing was changed there.
 4. **The task set does not separate the conditions** for the model tested. Decide whether to design harder scenarios before another comparison.
 5. **Production identity** remains undecided. The fixture's fixed bearer tokens are not authentication.
-6. **Seven Dependabot PRs** are open and unreviewed (#3, #73, #74, #76 to #79).
+6. **Nine Dependabot PRs** are open and unreviewed: seven version bumps (#3, #73, #74, #76 to #79) and two security updates (#82, #83) that appeared when security updates were enabled on 2026-11-15.
+7. **CI is red on the pilot jobs.** Debian replaced the PostgreSQL package version that the `full_tool` agent image pins, so that image no longer builds. `metered-dry-run` and all six `pilot-controls` jobs fail on every branch. Any fix changes the digests of six task trees that the pilot campaign froze, so the choice of fix is the owner's. See [#84](https://github.com/dillaryclump/democratize-security/issues/84).
+8. **151 Dependabot alerts are open**, in four packages: `certifi` (critical, 82 manifests), `opentelemetry-api` (medium, 55 manifests), `filelock` (13 alerts in `uv.lock`) and `pytest` (1). Most are one pinned requirement repeated across the task directories. Updating the pinned files under `tasks/pilot/` also changes frozen task digests.
 
 ## Implemented capabilities
 
@@ -45,7 +47,8 @@ Check live [issues](https://github.com/dillaryclump/democratize-security/issues)
 
 | What | Revision | Result |
 | --- | --- | --- |
-| CI on main | `c05e58d`, run [40001476306](https://github.com/dillaryclump/democratize-security/actions/runs/40001476306) | All 16 jobs passed |
+| CI on main, 2026-10-23 | `c05e58d`, run [40001476306](https://github.com/dillaryclump/democratize-security/actions/runs/40001476306) | All 16 jobs passed |
+| CI on #81, 2026-11-15 | `bcbd8d7`, run [43755057920](https://github.com/dillaryclump/democratize-security/actions/runs/43755057920) | 9 of 16 jobs passed. `metered-dry-run` and the six `pilot-controls` jobs failed at the `full_tool` image build (#84). Two unrelated branches based on `c05e58d` fail the same jobs |
 | Full suite on the dedicated worker | `c05e58d`, 2026-10-23 | 1,429 passed, none skipped, with real PostgreSQL, Docker and Harbor |
 | Pilot controls on the dedicated worker | `c05e58d`, 2026-10-23 | 84 of 84 control trials accepted and audited |
 | Calibration, live | `1f83ca6`, 2026-10-23 | 6 of 6 pass and complete, 27¢ upper bound |
@@ -72,7 +75,8 @@ No spending beyond the $15 pilot cap is approved.
 1. Reconcile the interrupted pilot attempt and record the owner's decision to close or resume (open item 1).
 2. Reconcile settled costs against the provider bill (open item 2).
 3. Clean up the worker after the ledger is reconciled (open item 3).
-4. Only then consider the next experiment. Do not start M5 search on a task set that shows no difference between conditions.
+4. Restore a green CI by fixing the `full_tool` image once the owner has chosen how (open item 7, #84).
+5. Only then consider the next experiment. Do not start M5 search on a task set that shows no difference between conditions.
 
 Do not manufacture accepted results from the offline evidence APIs, and do not treat a saved plan, binding or cost reservation as authorization to run a trial.
 

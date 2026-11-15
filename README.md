@@ -59,13 +59,15 @@ Full tables, provenance and deviations are in [docs/RESULTS.md](docs/RESULTS.md)
 
 | Run | Date | Trials | Outcome | Model cost (upper bound) |
 | --- | --- | --- | --- | --- |
-| Model-free controls | every CI run | 84 control trials across the 24 pilot variants | Reference solutions pass; unchanged starters and unsafe controls fail the reviewed checks | none |
+| Model-free controls | in CI; last full pass 2026-11-03 | 84 control trials across the 24 pilot variants | Reference solutions pass; unchanged starters and unsafe controls fail the reviewed checks | none |
 | Calibration | 2026-10-23 | 6 of 6 (3 tasks × 2 models) | 6 passed all 8 checks | $0.27 |
 | Pilot | 2026-10-23 | 20 of 48 graded, 1 interrupted, 27 not run | 20 passed all 10 checks: 5 of 5 in each of the four conditions | $1.07 |
 
 The pilot is **incomplete**. The worker's virtual machine stopped partway through, and the run has not been resumed. Under the pre-registered rule that unrun trials count as non-success, the joint success rate is 20 of 48, and 5 of 12 in every condition.
 
 What the graded trials show is that the pipeline works end to end for about five cents a trial, and that **no difference between conditions was observed**. The baseline, with no security guidance, no database protection and no self-check, passed everything it attempted, so these tasks do not yet separate the conditions for the model tested. That is a finding about the task set, not evidence that the integration helps or that AI-written code is safe.
+
+**Known breakage, 2026-11-15.** The agent image for the six `full_tool` pilot variants no longer builds, because Debian replaced the exact PostgreSQL package version it pins. The CI jobs `pilot-controls` and `metered-dry-run` fail for that reason on every branch, so the CI badge above is red. Those jobs last passed on 2026-11-03. The other three conditions, the application tasks and grading are unaffected. See [#84](https://github.com/dillaryclump/democratize-security/issues/84).
 
 ## Quick start
 
@@ -102,11 +104,13 @@ See [docs/REFERENCE.md](docs/REFERENCE.md) for the access contract and the table
 
 ```bash
 uv sync --locked --group harbor
-uv run --locked --group harbor python scripts/pilot_controls.py invoice-read
-uv run --locked --group harbor python scripts/pilot.py --dry-run
+uv run --locked --group harbor python scripts/harbor_apps.py invoice-read
+uv run --locked --group harbor python scripts/calibration.py --dry-run
 ```
 
-See [docs/APPLICATION_TASKS.md](docs/APPLICATION_TASKS.md) and [docs/HARBOR_AUDIT.md](docs/HARBOR_AUDIT.md).
+The first command runs the reference, unchanged-starter and unsafe controls for one application task, with sealed replays and boundary audits. The second runs one scripted agent trial through the full metered lifecycle. See [docs/APPLICATION_TASKS.md](docs/APPLICATION_TASKS.md) and [docs/HARBOR_AUDIT.md](docs/HARBOR_AUDIT.md).
+
+The pilot's equivalents are `scripts/pilot_controls.py FAMILY` and `scripts/pilot.py --dry-run`. Until [#84](https://github.com/dillaryclump/democratize-security/issues/84) is fixed they fail when they reach a `full_tool` variant.
 
 Live model runs spend money and are refused unless they run on a prepared dedicated worker with a clean checkout and an approved budget. See [docs/CALIBRATION.md](docs/CALIBRATION.md) and [docs/PILOT_PROTOCOL.md](docs/PILOT_PROTOCOL.md).
 
