@@ -1,6 +1,11 @@
 """Tabulate the M4 pilot ledger per docs/PILOT_PROTOCOL.md; every scheduled trial counts.
 
-Usage: pilot_report.py LEDGER_DIR OUTPUT.md
+Usage: pilot_report.py LEDGER_DIR OUTPUT.md [CAMPAIGN.json]
+
+The ledger must hold the campaign. The default is `campaigns/pilot.v1.json`,
+the pilot that ran on 2026-10-23, so the protocol's two-argument command keeps
+tabulating that run's ledger. Name another campaign file to tabulate a ledger
+that holds it instead.
 
 Primary: joint success = an admitted complete report whose ten v4 checks all
 pass. Unrun, interrupted and incomplete trials are non-success and reported
@@ -22,6 +27,8 @@ from democratize_security.pilot.instructions import CONDITIONS
 from democratize_security.store import PlanStore
 from democratize_security.verification.report import ORDER_V4 as ORDER
 
+# The campaign that ran; `pilot.CAMPAIGN` restates it over later task trees.
+CLOSED_CAMPAIGN = pilot.ROOT / "campaigns/pilot.v1.json"
 ISOLATION = ("foreign_reads", "spoofing", "tenant_switching", "identity")
 FUNCTION = ("authorized_reads", "list_search")
 
@@ -154,10 +161,10 @@ def ledger_rows(store: PlanStore, planned: dict) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        raise SystemExit("usage: pilot_report.py LEDGER_DIR OUTPUT.md")
+    if len(argv) not in (2, 3):
+        raise SystemExit("usage: pilot_report.py LEDGER_DIR OUTPUT.md [CAMPAIGN.json]")
     ledger = Path(argv[0])
-    planned = plan_campaign(load_campaign(pilot.CAMPAIGN))
+    planned = plan_campaign(load_campaign(Path(argv[2]) if len(argv) == 3 else CLOSED_CAMPAIGN))
     with PlanStore(ledger, objects_directory=ledger.parent / "objects") as store:
         planned = store.snapshot(planned["campaign_id"])
         table = tabulate(planned, ledger_rows(store, planned))

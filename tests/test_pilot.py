@@ -1,4 +1,4 @@
-"""Offline checks for the frozen pilot campaign, runner and report (no Docker, no network)."""
+"""Offline checks for the pilot campaigns, runner and report (no Docker, no network)."""
 
 import json
 import re
@@ -12,7 +12,7 @@ from democratize_security.contracts import load_campaign, plan
 from democratize_security.model_budget import trial_reservation_ceiling_cents
 from democratize_security.pilot import FAMILIES
 from democratize_security.pilot.instructions import CONDITIONS
-from democratize_security.store import PlanStore
+from democratize_security.store import PlanStore, StoreError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -23,6 +23,10 @@ try:
     import pilot_report
 finally:
     sys.path.remove(str(ROOT / "scripts"))
+
+# The campaign that ran on 2026-10-23, and its identity in that run's ledger.
+CLOSED_CAMPAIGN = pilot_report.CLOSED_CAMPAIGN
+CLOSED_CAMPAIGN_ID = "e9911552b38226b9898067d0752430212653cba2f271e534acdf86a3801a9b3f"
 
 
 def test_campaign_shape():
@@ -66,6 +70,22 @@ def test_task_revisions_match_variant_trees():
         assert task["split"] == "development"
 
 
+def test_closed_campaign_is_preserved():
+    assert CLOSED_CAMPAIGN == ROOT / "campaigns/pilot.v1.json"
+    assert plan(load_campaign(CLOSED_CAMPAIGN))["campaign_id"] == CLOSED_CAMPAIGN_ID
+
+
+def test_current_campaign_restates_the_closed_design():
+    closed, current = load_campaign(CLOSED_CAMPAIGN), load_campaign(pilot.CAMPAIGN)
+    assert "No live run of this revision is approved" in current["stopping_rule"]
+    for campaign in (closed, current):
+        for key in ("name", "source_revision", "stopping_rule"):
+            del campaign[key]
+        for task in campaign["tasks"]:
+            del task["revision"]
+    assert current == closed
+
+
 def test_trial_order_seeded_and_block_balanced():
     planned = plan(load_campaign(pilot.CAMPAIGN))
     first = pilot.trial_order(planned, 20261023)
@@ -98,6 +118,13 @@ def test_variant_for_trial():
 def test_live_refuses_without_worker_host_flag(monkeypatch, tmp_path):
     monkeypatch.delenv("DS_WORKER_HOST_REQUIRED", raising=False)
     with pytest.raises(SystemExit, match="DS_WORKER_HOST_REQUIRED=1"):
+        pilot.main(["--live", "--key-file", str(tmp_path / "k"), "--ledger", str(tmp_path)])
+
+
+def test_live_refuses_without_an_approved_budget(monkeypatch, tmp_path):
+    monkeypatch.setenv("DS_WORKER_HOST_REQUIRED", "1")
+    assert pilot.APPROVED_CENTS is None
+    with pytest.raises(SystemExit, match="no live pilot run is approved"):
         pilot.main(["--live", "--key-file", str(tmp_path / "k"), "--ledger", str(tmp_path)])
 
 
@@ -159,3 +186,22 @@ def test_report_counts_every_scheduled_trial(tmp_path):
     assert cell["isolation_failures"] >= 1
     markdown = pilot_report.render(table)
     assert "| invoice-read |" in markdown and "48 scheduled" in markdown
+
+
+def test_report_defaults_to_the_campaign_that_ran(tmp_path):
+    ledger, objects_dir, output = tmp_path / "ledger", tmp_path / "objects", tmp_path / "report.md"
+    ledger.mkdir()
+    objects_dir.mkdir()
+    with PlanStore(ledger, objects_directory=objects_dir) as store:
+        store.import_campaign(load_campaign(CLOSED_CAMPAIGN))
+    assert pilot_report.main([str(ledger), str(output)]) == 0
+    assert "48 scheduled, 0 joint successes, 48 not run" in output.read_text()
+    with pytest.raises(StoreError, match="Unknown campaign"):
+        pilot_report.main([str(ledger), str(output), str(pilot.CAMPAIGN)])
+
+
+def test_report_tabulates_a_named_campaign(tmp_path):
+    ledger, _, _ = synthetic_ledger(tmp_path)
+    output = tmp_path / "report.md"
+    assert pilot_report.main([str(ledger), str(output), str(pilot.CAMPAIGN)]) == 0
+    assert "48 scheduled" in output.read_text()

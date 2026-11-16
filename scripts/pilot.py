@@ -1,7 +1,12 @@
-"""The owner-approved 48-trial M4 pilot (#57): 6 families x 4 conditions x 2 repetitions.
+"""The 48-trial M4 pilot design: 6 families x 4 conditions x 2 repetitions.
 
-The frozen campaign is `campaigns/pilot.v1.json` (gpt-6.1-sol, medium reasoning,
-1500-cent hard cap) and the pre-registered analysis is `docs/PILOT_PROTOCOL.md`.
+`campaigns/pilot.v1.json` (gpt-6.1-sol, medium reasoning, 1500-cent hard cap
+approved on #57) ran on 2026-10-23 and the owner closed it; it is kept unchanged
+as the record of that run. `campaigns/pilot.v2.json` restates the same design
+over the current task trees, whose full_tool image installs its PostgreSQL from
+a dated Debian snapshot (#84). No budget is approved for it, so `--live`
+refuses. The pre-registered analysis is `docs/PILOT_PROTOCOL.md`.
+
 Each trial is one metered v8 runtime attempt through `calibration.run_trial` on
 its generated variant in `tasks/pilot/`, graded by protocol v4 on a sealed
 replay and admitted only through authenticated signing. Trials run one at a
@@ -11,7 +16,8 @@ remains under the cap.
 
 `--dry-run`: one full_tool invoice-read trial with a scripted model-free
 provider (Docker, no key or network). `--live`: real spending, dedicated worker
-only, after the pilot controls passed on this exact commit.
+only, after the pilot controls passed on this exact commit and only under an
+approved cap recorded in `APPROVED_CENTS`.
 """
 
 import argparse
@@ -41,13 +47,15 @@ from democratize_security.store import PlanStore
 from democratize_security.verification.report import PROTOCOL_V4
 
 ROOT = calibration.ROOT
-CAMPAIGN = ROOT / "campaigns/pilot.v1.json"
+CAMPAIGN = ROOT / "campaigns/pilot.v2.json"
 LIMITS = ROOT / "campaigns/proposals/pilot-limits.v1.json"
 PRICING = calibration.PRICING
 OUTPUT = ROOT / ".research/pilot"
 DRY_RUN_OUTPUT = ROOT / ".research/pilot-dry-run"
 CONTROLS_OUTPUT = ROOT / ".research/pilot-controls"
-APPROVED_CENTS = 1500
+# The owner's model-only cap for a live run of CAMPAIGN, or None when no run is
+# approved. The 1500 cents approved on #57 covered pilot.v1.json only.
+APPROVED_CENTS = None
 # Sealed replays must carry the variant's fixture selection.
 TRUSTED_FILES = (*APP_TRUSTED_FILES, "tests/variant.json")
 
@@ -218,9 +226,11 @@ def dry_run() -> list[dict]:
 def live(key_file: Path, ledger: Path) -> list[dict]:
     if os.environ.get("DS_WORKER_HOST_REQUIRED") != "1":
         raise SystemExit("live pilot requires DS_WORKER_HOST_REQUIRED=1")
+    if APPROVED_CENTS is None:
+        raise SystemExit(f"no live pilot run is approved for {CAMPAIGN.name}")
     campaign = load_campaign(CAMPAIGN)
     if campaign["limits"]["max_cost_usd_cents"] != APPROVED_CENTS:
-        raise SystemExit("campaign cap differs from the approved 1500 cents")
+        raise SystemExit(f"campaign cap differs from the approved {APPROVED_CENTS} cents")
     for task in campaign["tasks"]:
         if task["revision"] != family_revision(task["family"]):
             raise SystemExit(f"{task['family']} variants changed since the campaign was frozen")

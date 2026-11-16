@@ -1,10 +1,21 @@
 FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
 # full_tool only: PostgreSQL for the agent's private self-check cluster. No
 # default cluster is created; check-isolation runs initdb in its bounded /tmp.
+# The live Debian archive drops a package version once a newer one is
+# published, so the pinned version and its dependencies come from the dated
+# snapshot archive. Snapshot Release files are past their validity date by
+# design; apt still verifies their signatures.
 RUN mkdir -p /etc/postgresql-common \
     && echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.conf \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-15=15.19-0+deb12u1 \
+    && rm /etc/apt/sources.list.d/debian.sources \
+    && printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/%s main\n' \
+       'debian/20261023T180000Z bookworm' \
+       'debian/20261023T180000Z bookworm-updates' \
+       'debian-security/20261023T180000Z bookworm-security' \
+       > /etc/apt/sources.list \
+    && apt-get -o Acquire::Retries=3 update \
+    && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+       postgresql-15=15.19-0+deb12u1 \
     && rm -rf /var/lib/apt/lists/*
 # initdb needs a passwd entry for the agent's fixed uid.
 RUN useradd --uid 10001 --user-group --no-create-home --home-dir /tmp \
