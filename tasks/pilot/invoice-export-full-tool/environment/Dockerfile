@@ -4,11 +4,12 @@ FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3
 # The live Debian archive drops a package version once a newer one is
 # published, so the pinned version and its dependencies come from the dated
 # snapshot archive. Snapshot Release files are past their validity date by
-# design; apt still verifies their signatures.
+# design, so that check is off. apt still verifies their signatures, and HTTPS
+# keeps a network attacker from replaying an older signed index.
 RUN mkdir -p /etc/postgresql-common \
     && echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.conf \
     && rm /etc/apt/sources.list.d/debian.sources \
-    && printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/%s main\n' \
+    && printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://snapshot.debian.org/archive/%s main\n' \
        'debian/20261023T180000Z bookworm' \
        'debian/20261023T180000Z bookworm-updates' \
        'debian-security/20261023T180000Z bookworm-security' \
