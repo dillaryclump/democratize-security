@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "name": "m4-pilot-four-conditions-v2",
+  "hypothesis": "The full integration (RLS starter, security instructions and an isolation self-check) raises joint functional and security success over ordinary prompts, security instructions alone and an RLS starter alone.",
+  "source_revision": "c05e58d8a4499ed62c107d4012d109b4c9179afd",
+  "scoring_version": "synthetic-reference-v4",
+  "model": {
+    "provider": "openai",
+    "identifier": "gpt-6.1-sol",
+    "settings": {
+      "reasoning_effort": "medium",
+      "service_tier": "default",
+      "order_seed": 20261023
+    }
+  },
+  "conditions": [
+    "ordinary",
+    "instructions",
+    "rls_starter",
+    "full_tool"
+  ],
+  "repetitions": 2,
+  "tasks": [
+    {
+      "id": "invoice-read-pilot",
+      "family": "invoice-read",
+      "split": "development",
+      "revision": "61ecd44dfb03f72cb30ffb35546d8bdc3f1fdd52dc9908cd7f90b19c99d1cdf4"
+    },
+    {
+      "id": "invoice-search-pilot",
+      "family": "invoice-search",
+      "split": "development",
+      "revision": "14660d0183e5e6f449193917ecec6e2334e90cc26ef98e80869218069d1dfab6"
+    },
+    {
+      "id": "invoice-export-pilot",
+      "family": "invoice-export",
+      "split": "development",
+      "revision": "c37e186a4687d65e6e22ed0ca9d8016e72cf3c310582d30b7661d147edd1cb22"
+    },
+    {
+      "id": "invoice-update-pilot",
+      "family": "invoice-update",
+      "split": "development",
+      "revision": "bd11ceaecca5fb70f1d73bca979e02e0102696f1c135732125a9977fd687911a"
+    },
+    {
+      "id": "invoice-create-pilot",
+      "family": "invoice-create",
+      "split": "development",
+      "revision": "ec46ee79c882e688ea5682c065c8654fa4810953e4a2851f947e4fe5eb8e1c9c"
+    },
+    {
+      "id": "invoice-summary-pilot",
+      "family": "invoice-summary",
+      "split": "development",
+      "revision": "b31beb87f9bbc57fe0db786eccfdfb6d8e55fa3f8debdb0cb1ef4a1087932cbe"
+    }
+  ],
+  "limits": {
+    "max_trials": 48,
+    "max_cost_usd_cents": 1500,
+    "timeout_seconds": 1800,
+    "infrastructure_retries": 0,
+    "repair_attempts": 0,
+    "concurrency": 1
+  },
+  "stopping_rule": "No live run of this revision is approved. It restates campaigns/pilot.v1.json, which ran on 2026-10-23 and was closed by the owner, over the task trees regenerated for #84, and it serves the model-free dry run and controls. A run needs a new owner-approved cap. The design is unchanged: seeded, repetition-balanced order; stop at the first unknown request outcome or integrity error, or when less than one trial hold remains; no retries or repairs. All scheduled trials are reported per docs/PILOT_PROTOCOL.md."
+}
